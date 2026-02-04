@@ -1,208 +1,416 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Proyecto 14 Días – Proceso C</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Proyecto 14 Días - Repositorio y Reporte</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Firebase SDK -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-<script src="https://cdn.tailwindcss.com"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        // CONFIGURACIÓN E INICIALIZACIÓN
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'proyecto-14-dias';
 
-<style>
-body {
-    background:#0f172a;
-    color:#f8fafc;
-    font-family: Inter, system-ui, sans-serif;
-}
-.glass {
-    background:#1e293b;
-    border:1px solid #334155;
-    border-radius:20px;
-}
-.task.done { opacity:.45; text-decoration:line-through; }
-button:disabled { opacity:.4; cursor:not-allowed; }
-</style>
+        // Estado Global
+        let currentUser = null;
+        let localState = {
+            currentDay: 1,
+            completedDays: [],
+            reflections: []
+        };
+
+        const statusText = document.getElementById('syncStatus');
+        const userIdDisplay = document.getElementById('userIdDisplay');
+
+        // Autenticación inicial (Regla 3)
+        const initAuth = async () => {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (err) { console.error("Error auth", err); }
+        };
+
+        initAuth();
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                currentUser = user;
+                userIdDisplay.innerText = `ID: ${user.uid}`;
+                loadData();
+            }
+        });
+
+        // Cargar datos
+        async function loadData() {
+            if (!currentUser) return;
+            const docRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'progress', 'mainState');
+            try {
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    localState.currentDay = data.currentDay || 1;
+                    localState.completedDays = data.completedDays || [];
+                    localState.reflections = data.reflections || [];
+                    if (data.taskStates) {
+                        data.taskStates.forEach((dayTasks, dIdx) => {
+                            dayTasks.forEach((done, tIdx) => {
+                                if (window.plan[dIdx]) window.plan[dIdx].tasks[tIdx].done = done;
+                            });
+                        });
+                    }
+                }
+                window.updateUI();
+                window.renderReflections();
+            } catch (error) { console.error("Error carga", error); }
+        }
+
+        // Guardar datos
+        window.saveData = async () => {
+            if (!currentUser) return;
+            statusText.innerText = "Sincronizando...";
+            const taskStates = window.plan.map(p => p.tasks.map(t => t.done));
+            try {
+                await setDoc(doc(db, 'artifacts', appId, 'users', currentUser.uid, 'progress', 'mainState'), {
+                    currentDay: localState.currentDay,
+                    completedDays: localState.completedDays,
+                    reflections: localState.reflections,
+                    taskStates: taskStates,
+                    lastUpdated: new Date().toISOString()
+                });
+                statusText.innerText = "Sincronizado";
+            } catch (error) { statusText.innerText = "Error Sync"; }
+        };
+
+        window.localState = localState;
+    </script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap');
+        :root { --bg: #0f172a; --card: #1e293b; --accent: #38bdf8; --success: #10b981; }
+        body { background-color: var(--bg); color: #f8fafc; font-family: 'Inter', sans-serif; overflow-x: hidden; }
+        .glass-card { background: var(--card); border: 1px solid #334155; }
+        .day-box { aspect-ratio: 1/1; border-radius: 12px; font-size: 0.65rem; border: 1px solid #334155; cursor: pointer; transition: all 0.2s; }
+        .day-box.completed { background: rgba(16, 185, 129, 0.2); border-color: var(--success); color: var(--success); }
+        .day-box.current { border-color: var(--accent); background: rgba(56, 189, 248, 0.1); transform: scale(1.05); }
+        .task-item { transition: all 0.2s ease; cursor: pointer; border-left: 4px solid transparent; }
+        .task-item.done { opacity: 0.5; text-decoration: line-through; border-left-color: var(--success); background: rgba(16, 185, 129, 0.05); }
+        .custom-checkbox { width: 20px; height: 20px; border: 2px solid #475569; border-radius: 6px; position: relative; }
+        .task-item.done .custom-checkbox { background: var(--success); border-color: var(--success); }
+        .task-item.done .custom-checkbox::after { content: '✓'; color: white; font-size: 12px; position: absolute; left: 3px; top: -1px; font-weight: bold; }
+        #reportModal { backdrop-filter: blur(8px); }
+    </style>
 </head>
+<body class="min-h-screen pb-20">
+    <div class="max-w-3xl mx-auto p-4 md:p-8">
+        
+        <header class="flex justify-between items-center mb-6 pt-4">
+            <div>
+                <h1 class="text-3xl font-extrabold italic text-white uppercase leading-none tracking-tighter">PROYECTO <span class="text-sky-400">14 DÍAS</span></h1>
+                <span id="syncStatus" class="text-[9px] font-bold uppercase tracking-widest text-slate-500">Conectando...</span>
+            </div>
+            <div class="text-right">
+                <span id="userIdDisplay" class="text-[8px] font-mono text-slate-600 block mb-1">...</span>
+                <span id="dateDisplay" class="text-xs font-mono text-slate-500 uppercase italic"></span>
+            </div>
+        </header>
 
-<body class="p-4 max-w-3xl mx-auto">
+        <!-- Bloque de Radar y Tanques -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+            <div class="glass-card rounded-3xl p-6 flex flex-col items-center">
+                <h3 class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-4 self-start italic">Balance de Energía</h3>
+                <div class="w-full h-48 flex items-center justify-center">
+                    <canvas id="radarChart"></canvas>
+                </div>
+            </div>
 
-<h1 class="text-3xl font-black italic mb-1">PROYECTO <span class="text-sky-400">14 DÍAS</span></h1>
-<p id="date" class="text-xs text-slate-400 mb-6"></p>
+            <div class="glass-card rounded-3xl p-6 flex flex-col">
+                <h3 class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-4 italic">Nivel de Bloques</h3>
+                <div class="flex-1 flex justify-around items-end gap-4 h-32">
+                    <div class="flex flex-col items-center w-1/3 h-full justify-end">
+                        <div class="w-full bg-slate-800 rounded-t-xl overflow-hidden relative h-3/4 border border-slate-700">
+                            <div id="fillEstabilidad" class="absolute bottom-0 w-full bg-sky-500/80 transition-all duration-1000" style="height: 0%"></div>
+                        </div>
+                        <span class="text-[8px] font-black text-slate-500 mt-2 uppercase">Estabilidad</span>
+                    </div>
+                    <div class="flex flex-col items-center w-1/3 h-full justify-end">
+                        <div class="w-full bg-slate-800 rounded-t-xl overflow-hidden relative h-3/4 border border-slate-700">
+                            <div id="fillFlujo" class="absolute bottom-0 w-full bg-amber-500/80 transition-all duration-1000" style="height: 0%"></div>
+                        </div>
+                        <span class="text-[8px] font-black text-slate-500 mt-2 uppercase">Flujo</span>
+                    </div>
+                    <div class="flex flex-col items-center w-1/3 h-full justify-end">
+                        <div class="w-full bg-slate-800 rounded-t-xl overflow-hidden relative h-3/4 border border-slate-700">
+                            <div id="fillSentido" class="absolute bottom-0 w-full bg-emerald-500/80 transition-all duration-1000" style="height: 0%"></div>
+                        </div>
+                        <span class="text-[8px] font-black text-slate-500 mt-2 uppercase">Sentido</span>
+                    </div>
+                </div>
+            </div>
+        </div>
 
-<div class="glass p-4 mb-6">
-<canvas id="radar"></canvas>
-</div>
+        <!-- Calendario -->
+        <section class="glass-card rounded-3xl p-6 mb-8">
+            <div id="calendarGrid" class="grid grid-cols-7 gap-2"></div>
+        </section>
 
-<div class="glass p-4 mb-6">
-<h2 id="dayTitle" class="text-xl font-black italic mb-2"></h2>
-<p id="blockLabel" class="text-xs uppercase tracking-widest mb-4"></p>
+        <!-- Panel de Tareas -->
+        <section class="glass-card rounded-3xl p-6 md:p-8 border-l-8 border-sky-500 shadow-2xl mb-8 relative">
+            <div class="flex justify-between items-start mb-6">
+                <div>
+                    <span id="blockBadge" class="border text-[10px] font-black px-2 py-1 rounded uppercase tracking-widest"></span>
+                    <h2 class="text-2xl font-black text-white italic mt-1" id="dayTitle">Día 1</h2>
+                </div>
+                <div class="text-right">
+                    <span id="dailyProgressText" class="text-xl font-black text-white italic">0/3</span>
+                </div>
+            </div>
+            
+            <div class="space-y-3 mb-8" id="taskList"></div>
 
-<div id="tasks" class="space-y-2 mb-4"></div>
+            <div class="w-full bg-slate-900 h-2 rounded-full overflow-hidden mb-6">
+                <div id="dailyProgressBar" class="h-full bg-sky-500 transition-all duration-500" style="width: 0%"></div>
+            </div>
+            
+            <div class="flex flex-col gap-2">
+                <button onclick="window.cerrarDia()" id="closeDayBtn" class="w-full font-black py-5 rounded-2xl transition-all uppercase tracking-widest italic text-sm">
+                    Cerrar Día
+                </button>
+                <button onclick="window.showReport()" id="reportBtn" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-black py-4 rounded-2xl transition-all uppercase tracking-widest italic text-xs hidden shadow-lg shadow-indigo-500/20">
+                    Generar Reporte de Éxito
+                </button>
+            </div>
+        </section>
 
-<div class="h-2 bg-slate-900 rounded overflow-hidden mb-4">
-<div id="progress" class="h-full bg-sky-500" style="width:0%"></div>
-</div>
+        <!-- Bitácora -->
+        <section class="glass-card rounded-3xl p-6">
+            <h3 class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-4 italic">Bitácora</h3>
+            <div class="flex gap-2 mb-4">
+                <input id="reflexionInput" class="flex-1 bg-slate-900/50 border border-slate-700 rounded-xl p-3 text-sm focus:outline-none focus:ring-1 focus:ring-sky-500" placeholder="Escribe tu reflexión hoy...">
+                <button onclick="window.guardarReflexion()" class="bg-sky-600 px-4 rounded-xl font-bold text-xs uppercase">Post</button>
+            </div>
+            <div id="historyLog" class="space-y-2 max-h-48 overflow-y-auto pr-2"></div>
+        </section>
 
-<button id="closeDay" onclick="cerrarDia()" disabled
-class="w-full py-3 rounded bg-emerald-500 text-black font-black">
-Cerrar día
-</button>
-</div>
+    </div>
 
-<div class="glass p-4">
-<textarea id="logInput" rows="2"
-class="w-full bg-slate-900 p-3 rounded text-sm"
-placeholder="Qué se hizo hoy…"></textarea>
-<button onclick="guardarBitacora()"
-class="mt-2 text-xs uppercase tracking-widest text-sky-400">
-Guardar nota
-</button>
-<div id="log" class="mt-3 space-y-2 text-xs"></div>
-</div>
+    <!-- MODAL DE REPORTE -->
+    <div id="reportModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden">
+        <div class="absolute inset-0 bg-slate-950/90"></div>
+        <div class="glass-card w-full max-w-2xl max-h-[90vh] rounded-[2rem] relative z-10 overflow-y-auto p-8 border-indigo-500/30">
+            <button onclick="window.closeReport()" class="absolute top-6 right-6 text-slate-500 hover:text-white font-bold">CERRAR</button>
+            
+            <div class="text-center mb-8">
+                <span class="text-indigo-400 font-black text-[10px] uppercase tracking-[0.3em]">Resumen de Ciclo</span>
+                <h2 class="text-4xl font-black italic text-white uppercase mt-2">Éxito Alcanzado</h2>
+                <div class="w-24 h-1 bg-indigo-500 mx-auto mt-4 rounded-full"></div>
+            </div>
 
-<script>
-/* ---------------- PLAN ---------------- */
+            <div class="grid grid-cols-2 gap-4 mb-8">
+                <div class="bg-slate-900/50 p-6 rounded-3xl border border-slate-800 text-center">
+                    <span class="text-3xl font-black text-white" id="repTotalTasks">0</span>
+                    <p class="text-[9px] font-bold text-slate-500 uppercase mt-1">Tareas Completadas</p>
+                </div>
+                <div class="bg-slate-900/50 p-6 rounded-3xl border border-slate-800 text-center">
+                    <span class="text-3xl font-black text-white" id="repEfficiency">0%</span>
+                    <p class="text-[9px] font-bold text-slate-500 uppercase mt-1">Eficiencia de Ciclo</p>
+                </div>
+            </div>
 
-const plan = [
-{day:1,block:"Estabilidad",radar:[30,10,20],tasks:[
-{t:"Registro civil Sebastián",d:"Documento sucesión",done:false},
-{t:"Carpeta digital",d:"Orden legal",done:false},
-{t:"Foto: luz entrando",d:"Calma",done:false}
-]},
-{day:2,block:"Estabilidad",radar:[40,15,25],tasks:[
-{t:"Registro civil Ana María",d:"Documento sucesión",done:false},
-{t:"Comprar estuco/lijas",d:"Casa Cota",done:false},
-{t:"Foto: texturas",d:"Observación",done:false}
-]},
-{day:3,block:"Estabilidad",radar:[50,20,30],tasks:[
-{t:"Escanear documentos",d:"Legal",done:false},
-{t:"Correo seguimiento",d:"Gestión",done:false},
-{t:"Dibujo libre",d:"Descarga",done:false}
-]},
-{day:4,block:"Estabilidad",radar:[60,25,35],tasks:[
-{t:"Resanar zona",d:"Casa",done:false},
-{t:"Comprar silicona",d:"Casa",done:false},
-{t:"Foto: antes",d:"Registro",done:false}
-]},
-{day:5,block:"Estabilidad",radar:[70,30,40],tasks:[
-{t:"Coordinar vidrio",d:"Casa",done:false},
-{t:"Ordenar materiales",d:"Orden",done:false},
-{t:"Dibujo objetos",d:"Presencia",done:false}
-]},
-{day:6,block:"Flujo",radar:[50,40,30],tasks:[
-{t:"Sellar humedad",d:"Una zona",done:false},
-{t:"Llamada corta",d:"Gestión",done:false},
-{t:"Foto: manos",d:"Acción",done:false}
-]},
-{day:7,block:"Flujo",radar:[50,50,35],tasks:[
-{t:"Pintar pared",d:"Avance",done:false},
-{t:"Limpieza ligera",d:"Orden",done:false},
-{t:"Foto: proceso",d:"Registro",done:false}
-]},
-{day:8,block:"Flujo",radar:[50,60,40],tasks:[
-{t:"Pintar otra pared",d:"Ritmo",done:false},
-{t:"Revisar respuestas",d:"Legal",done:false},
-{t:"Dibujo libre",d:"Descanso",done:false}
-]},
-{day:9,block:"Flujo",radar:[50,70,50],tasks:[
-{t:"Limpieza parcial",d:"Preparar",done:false},
-{t:"Fotos avance",d:"Registro",done:false},
-{t:"Foto: después",d:"Logro",done:false}
-]},
-{day:10,block:"Sentido",radar:[40,60,60],tasks:[
-{t:"Texto arriendo",d:"Ingreso",done:false},
-{t:"Revisar precios",d:"Mercado",done:false},
-{t:"Foto: espacios",d:"Potencial",done:false}
-]},
-{day:11,block:"Sentido",radar:[40,60,70],tasks:[
-{t:"Publicar arriendo",d:"Acción",done:false},
-{t:"Responder mensajes",d:"Gestión",done:false},
-{t:"Dibujo",d:"Expresión",done:false}
-]},
-{day:12,block:"Sentido",radar:[40,60,80],tasks:[
-{t:"Contactar abogado",d:"Sucesión",done:false},
-{t:"Anotar respuestas",d:"Bitácora",done:false},
-{t:"Foto: caminos",d:"Metáfora",done:false}
-]},
-{day:13,block:"Sentido",radar:[40,60,90],tasks:[
-{t:"Segundo abogado",d:"Comparar",done:false},
-{t:"Evaluar opciones",d:"Sin decidir",done:false},
-{t:"Dibujo",d:"Calma",done:false}
-]},
-{day:14,block:"Sentido",radar:[50,70,100],tasks:[
-{t:"Revisión general",d:"Cierre",done:false},
-{t:"Ajustar lista",d:"Continuidad",done:false},
-{t:"Foto cierre",d:"Fin ciclo",done:false}
-]}
-];
+            <div class="space-y-6 mb-8">
+                <h4 class="text-[10px] font-black text-indigo-400 uppercase tracking-widest italic">Hitos Destacados</h4>
+                <div id="reportMilestones" class="space-y-3"></div>
+            </div>
 
-/* ------------- ESTADO + STORAGE ------------- */
+            <div class="bg-indigo-500/10 border border-indigo-500/20 p-6 rounded-3xl">
+                <h4 class="text-[10px] font-black text-indigo-400 uppercase tracking-widest italic mb-2">Conclusión Ikigai-Kaizen</h4>
+                <p id="reportSummary" class="text-sm text-slate-300 italic leading-relaxed"></p>
+            </div>
+        </div>
+    </div>
 
-let state = JSON.parse(localStorage.getItem("p14_state")) || {
-day:1,
-completed:[]
-};
+    <script>
+        // PLAN MAESTRO
+        window.plan = [
+            { day: 1, theme: "Estabilidad", radar: [30, 10, 20], tasks: [{ type: "Estructural", title: "Registro civil Sebastián", desc: "Legal sucesión.", done: false }, { type: "Operativa", title: "Carpeta digital", desc: "Estructura archivos.", done: false }, { type: "Creativa", title: "Foto: Luz", desc: "Ikigai.", done: false }] },
+            { day: 2, theme: "Estabilidad", radar: [40, 15, 25], tasks: [{ type: "Estructural", title: "Registro civil Ana", desc: "Legal sucesión.", done: false }, { type: "Operativa", title: "Lijas y estuco", desc: "Cota.", done: false }, { type: "Creativa", title: "Foto: Textura", desc: "Ikigai.", done: false }] },
+            { day: 3, theme: "Estabilidad", radar: [50, 20, 30], tasks: [{ type: "Estructural", title: "Digitalizar documentos", desc: "Orden legal.", done: false }, { type: "Operativa", title: "Correo seguimiento", desc: "Abogado.", done: false }, { type: "Creativa", title: "Dibujo 15 min", desc: "Calma.", done: false }] },
+            { day: 4, theme: "Estabilidad", radar: [60, 25, 35], tasks: [{ type: "Estructural", title: "Resanar zona", desc: "Acción Cota.", done: false }, { type: "Operativa", title: "Silicona", desc: "Materiales.", done: false }, { type: "Creativa", title: "Foto: Antes", desc: "Registro.", done: false }] },
+            { day: 5, theme: "Estabilidad", radar: [70, 30, 40], tasks: [{ type: "Estructural", title: "Vidrio gestión", desc: "Gestión Cota.", done: false }, { type: "Operativa", title: "Ordenar materiales", desc: "Limpieza.", done: false }, { type: "Creativa", title: "Dibujo objetos", desc: "Observación.", done: false }] },
+            { day: 6, theme: "Flujo", radar: [50, 40, 30], tasks: [{ type: "Estructural", title: "Humedades", desc: "Sellar.", done: false }, { type: "Operativa", title: "Confirmación", desc: "Llamada.", done: false }, { type: "Creativa", title: "Foto: Manos", desc: "Acción.", done: false }] },
+            { day: 7, theme: "Flujo", radar: [50, 50, 35], tasks: [{ type: "Estructural", title: "Pared pintura", desc: "Avance visible.", done: false }, { type: "Operativa", title: "Limpieza ligera", desc: "Post-pintura.", done: false }, { type: "Creativa", title: "Foto: Proceso", desc: "Registro.", done: false }] },
+            { day: 8, theme: "Flujo", radar: [50, 60, 40], tasks: [{ type: "Estructural", title: "Pared 2", desc: "Ritmo.", done: false }, { type: "Operativa", title: "Revisar legal", desc: "Respuestas.", done: false }, { type: "Creativa", title: "Dibujo libre", desc: "Ikigai.", done: false }] },
+            { day: 9, theme: "Flujo", radar: [50, 70, 50], tasks: [{ type: "Estructural", title: "Limpieza parcial", desc: "Preparar.", done: false }, { type: "Operativa", title: "Fotos avance", desc: "Registro.", done: false }, { type: "Creativa", title: "Foto: Después", desc: "Logro.", done: false }] },
+            { day: 10, theme: "Sentido", radar: [40, 60, 60], tasks: [{ type: "Estructural", title: "Texto arriendo", desc: "Borrador.", done: false }, { type: "Operativa", title: "Precios mercado", desc: "Comparativa.", done: false }, { type: "Creativa", title: "Foto: Espacios", desc: "Potencial.", done: false }] },
+            { day: 11, theme: "Sentido", radar: [40, 60, 70], tasks: [{ type: "Estructural", title: "Publicar", desc: "Acción pública.", done: false }, { type: "Operativa", title: "Responder", desc: "Gestión.", done: false }, { type: "Creativa", title: "Dibujo", desc: "Expresión.", done: false }] },
+            { day: 12, theme: "Sentido", radar: [40, 60, 80], tasks: [{ type: "Estructural", title: "Abogado 1", desc: "Sucesión.", done: false }, { type: "Operativa", title: "Bitácora legal", desc: "Notas.", done: false }, { type: "Creativa", title: "Foto: Caminos", desc: "Metáfora.", done: false }] },
+            { day: 13, theme: "Sentido", radar: [40, 60, 90], tasks: [{ type: "Estructural", title: "Abogado 2", desc: "Opción B.", done: false }, { type: "Operativa", title: "Análisis", desc: "Comparar.", done: false }, { type: "Creativa", title: "Dibujo", desc: "Calma.", done: false }] },
+            { day: 14, theme: "Sentido", radar: [50, 70, 100], tasks: [{ type: "Estructural", title: "Revisión final", desc: "Logros.", done: false }, { type: "Operativa", title: "Nuevo plan", desc: "Siguiente ciclo.", done: false }, { type: "Creativa", title: "Foto: Cierre", desc: "Ciclo.", done: false }] }
+        ];
 
-function save() {
-localStorage.setItem("p14_state", JSON.stringify({state,plan}));
-}
+        let radarChart = null;
 
-/* ------------- UI ------------- */
+        function initRadar() {
+            const ctx = document.getElementById('radarChart');
+            radarChart = new Chart(ctx, {
+                type: 'radar',
+                data: {
+                    labels: ['ESTABILIDAD', 'FLUJO', 'SENTIDO'],
+                    datasets: [{
+                        label: 'Fuerza',
+                        data: [10, 10, 10],
+                        backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                        borderColor: 'rgb(56, 189, 248)',
+                        pointBackgroundColor: 'rgb(56, 189, 248)',
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    scales: {
+                        r: { min: 0, max: 100, ticks: { display: false }, grid: { color: '#334155' }, angleLines: { color: '#334155' }, pointLabels: { color: '#64748b', font: { size: 9, weight: 'bold' } } }
+                    },
+                    plugins: { legend: { display: false } }
+                }
+            });
+        }
 
-const radar = new Chart(document.getElementById("radar"), {
-type:"radar",
-data:{
-labels:["Estabilidad","Flujo","Sentido"],
-datasets:[{data:[10,10,10],backgroundColor:"rgba(56,189,248,.3)",borderColor:"#38bdf8"}]
-},
-options:{plugins:{legend:{display:false}},scales:{r:{min:0,max:100}}}
-});
+        window.updateUI = () => {
+            const currentPlan = window.plan[window.localState.currentDay - 1];
+            document.getElementById('dayTitle').innerText = `Día ${currentPlan.day}`;
+            
+            let badgeClass = "bg-sky-500/20 text-sky-400 border-sky-500/30";
+            if (currentPlan.theme === "Flujo") badgeClass = "bg-amber-500/20 text-amber-400 border-amber-500/30";
+            if (currentPlan.theme === "Sentido") badgeClass = "bg-emerald-500/20 text-emerald-400 border-emerald-500/30";
+            document.getElementById('blockBadge').className = `border ${badgeClass} text-[10px] font-black px-2 py-1 rounded uppercase tracking-widest`;
+            document.getElementById('blockBadge').innerText = currentPlan.theme;
 
-function render() {
-const d = plan[state.day-1];
-document.getElementById("dayTitle").innerText = "Día " + d.day;
-document.getElementById("blockLabel").innerText = d.block;
+            const taskList = document.getElementById('taskList');
+            taskList.innerHTML = '';
+            let doneCount = 0;
+            currentPlan.tasks.forEach((t, i) => {
+                if(t.done) doneCount++;
+                const div = document.createElement('div');
+                div.className = `task-item p-4 rounded-xl border border-slate-700 bg-slate-800/50 flex items-center justify-between ${t.done ? 'done' : ''}`;
+                div.onclick = () => { t.done = !t.done; window.updateUI(); window.saveData(); };
+                div.innerHTML = `<div class="flex items-center gap-4"><div class="custom-checkbox"></div><div><h4 class="text-sm font-bold text-white">${t.title}</h4><p class="text-[10px] text-slate-400 italic">${t.desc}</p></div></div>`;
+                taskList.appendChild(div);
+            });
 
-const tasks = document.getElementById("tasks");
-tasks.innerHTML = "";
+            document.getElementById('dailyProgressText').innerText = `${doneCount}/3`;
+            document.getElementById('dailyProgressBar').style.width = `${(doneCount/3)*100}%`;
 
-let done = 0;
-d.tasks.forEach((t,i)=>{
-if(t.done) done++;
-const div = document.createElement("div");
-div.className="task p-2 rounded border border-slate-700 "+(t.done?"done":"");
-div.innerHTML = `<strong>${t.t}</strong><br><span class="text-xs">${t.d}</span>`;
-div.onclick=()=>{t.done=!t.done;save();render();};
-tasks.appendChild(div);
-});
+            const btn = document.getElementById('closeDayBtn');
+            if(doneCount === 3) {
+                btn.disabled = false;
+                btn.className = "w-full bg-emerald-500 text-white font-black py-5 rounded-2xl shadow-lg hover:scale-[1.02]";
+            } else {
+                btn.disabled = true;
+                btn.className = "w-full bg-slate-700 text-slate-400 font-black py-5 rounded-2xl opacity-50 cursor-not-allowed";
+            }
 
-document.getElementById("progress").style.width = (done/3*100)+"%";
-document.getElementById("closeDay").disabled = done<3;
+            // Reporte botón visibility
+            if(window.localState.completedDays.includes(14)) {
+                document.getElementById('reportBtn').classList.remove('hidden');
+            }
 
-radar.data.datasets[0].data = d.radar;
-radar.update();
-}
+            const grid = document.getElementById('calendarGrid');
+            grid.innerHTML = '';
+            for(let i=1; i<=14; i++) {
+                const div = document.createElement('div');
+                div.className = `day-box flex items-center justify-center font-black italic ${i === window.localState.currentDay ? 'current' : ''} ${window.localState.completedDays.includes(i) ? 'completed' : ''}`;
+                div.innerText = i;
+                if(i <= window.localState.currentDay || window.localState.completedDays.includes(i)) {
+                    div.onclick = () => { window.localState.currentDay = i; window.updateUI(); };
+                }
+                grid.appendChild(div);
+            }
 
-function cerrarDia() {
-if(!state.completed.includes(state.day)) state.completed.push(state.day);
-if(state.day<14) state.day++;
-save(); render();
-}
+            if(radarChart) {
+                radarChart.data.datasets[0].data = currentPlan.radar;
+                radarChart.update();
+            }
 
-function guardarBitacora(){
-const input=document.getElementById("logInput");
-if(!input.value) return;
-const div=document.createElement("div");
-div.innerText="Día "+state.day+": "+input.value;
-document.getElementById("log").prepend(div);
-input.value="";
-}
+            const est = window.localState.completedDays.filter(d => d<=5).length;
+            const flu = window.localState.completedDays.filter(d => d>5 && d<=9).length;
+            const sen = window.localState.completedDays.filter(d => d>9).length;
+            document.getElementById('fillEstabilidad').style.height = `${(est/5)*100}%`;
+            document.getElementById('fillFlujo').style.height = `${(flu/4)*100}%`;
+            document.getElementById('fillSentido').style.height = `${(sen/5)*100}%`;
+        };
 
-document.getElementById("date").innerText =
-new Date().toLocaleDateString("es-ES",{day:"2-digit",month:"short",year:"numeric"});
+        window.cerrarDia = () => {
+            if(!window.localState.completedDays.includes(window.localState.currentDay)) {
+                window.localState.completedDays.push(window.localState.currentDay);
+            }
+            if(window.localState.currentDay < 14) window.localState.currentDay++;
+            window.updateUI();
+            window.saveData();
+        };
 
-render();
-</script>
+        window.guardarReflexion = () => {
+            const val = document.getElementById('reflexionInput').value;
+            if(!val) return;
+            window.localState.reflections.push({ day: window.localState.currentDay, text: val });
+            document.getElementById('reflexionInput').value = '';
+            window.renderReflections();
+            window.saveData();
+        };
 
+        window.renderReflections = () => {
+            const container = document.getElementById('historyLog');
+            container.innerHTML = '';
+            window.localState.reflections.slice().reverse().forEach(ref => {
+                const entry = document.createElement('div');
+                entry.className = "p-3 bg-slate-800/50 rounded-xl border border-slate-700 text-[10px] italic mb-2";
+                entry.innerHTML = `<span class="text-sky-400 font-bold uppercase">Día ${ref.day}:</span> <span class="text-slate-400">"${ref.text}"</span>`;
+                container.appendChild(entry);
+            });
+        };
+
+        // LÓGICA DE REPORTE
+        window.showReport = () => {
+            const totalTasks = window.localState.completedDays.length * 3;
+            document.getElementById('repTotalTasks').innerText = totalTasks;
+            document.getElementById('repEfficiency').innerText = Math.round((window.localState.completedDays.length / 14) * 100) + "%";
+            
+            const milestones = document.getElementById('reportMilestones');
+            milestones.innerHTML = '';
+            
+            const highlights = [
+                { title: "Base Legal", desc: "Documentación lista para procesos de sucesión." },
+                { title: "Renovación Cota", desc: "Mejoras físicas tangibles para habitabilidad." },
+                { title: "Proyección Económica", desc: "Publicación y gestión de arriendo en marcha." }
+            ];
+
+            highlights.forEach(h => {
+                const d = document.createElement('div');
+                d.className = "flex items-start gap-4 p-4 bg-slate-900/50 rounded-2xl border border-slate-800";
+                d.innerHTML = `<div class="w-2 h-2 rounded-full bg-indigo-500 mt-1.5"></div><div><h5 class="text-xs font-black text-white uppercase">${h.title}</h5><p class="text-[10px] text-slate-500 italic">${h.desc}</p></div>`;
+                milestones.appendChild(d);
+            });
+
+            document.getElementById('reportSummary').innerText = "Has transformado la incertidumbre en un mapa de acción. Siguiendo el Kaizen, has avanzado un 1% cada día en áreas críticas: Estabilidad Legal, Flujo de Ejecución en Cota y el Sentido Económico para tu futuro. Este ciclo cierra con una estructura sólida sobre la cual construir el siguiente nivel.";
+
+            document.getElementById('reportModal').classList.remove('hidden');
+        };
+
+        window.closeReport = () => document.getElementById('reportModal').classList.add('hidden');
+
+        window.onload = () => {
+            document.getElementById('dateDisplay').innerText = new Date().toLocaleDateString('es-ES', { day:'2-digit', month:'short' }).toUpperCase();
+            initRadar();
+            window.updateUI();
+        };
+    </script>
 </body>
 </html>
