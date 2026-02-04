@@ -12,22 +12,24 @@
         import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
+        // CONFIGURACIÓN GLOBAL
         let db = null;
         let auth = null;
         let currentUser = null;
         let appId = 'proyecto-14-dias';
+        let isAppReady = false;
 
         let localState = {
             currentDay: 1,
             completedDays: [],
             reflections: [],
-            // Guardaremos las tareas que se arrastran aquí
             pendingTasks: [] 
         };
 
         const statusText = document.getElementById('syncStatus');
-        const userIdDisplay = document.getElementById('userIdDisplay');
+        const loadingOverlay = document.getElementById('loadingOverlay');
 
+        // FUNCIÓN DE INICIALIZACIÓN
         const initFirebase = async () => {
             try {
                 if (typeof __firebase_config !== 'undefined') {
@@ -37,26 +39,31 @@
                     db = getFirestore(app);
                     appId = typeof __app_id !== 'undefined' ? __app_id : 'proyecto-14-dias';
                     
-                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                        await signInWithCustomToken(auth, __initial_auth_token);
-                    } else {
-                        await signInAnonymously(auth);
-                    }
+                    const initAuth = async () => {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    };
+                    await initAuth();
 
-                    onAuthStateChanged(auth, (user) => {
+                    onAuthStateChanged(auth, async (user) => {
                         if (user) {
                             currentUser = user;
-                            userIdDisplay.innerText = `ID: ${user.uid}`;
-                            loadData();
+                            document.getElementById('userIdDisplay').innerText = `ID: ${user.uid}`;
+                            await loadData();
+                            showApp();
                         }
                     });
                 } else {
                     statusText.innerText = "Modo Local";
-                    window.updateUI(); 
+                    showApp();
                 }
             } catch (err) { 
+                console.error("Error init:", err);
                 statusText.innerText = "Error de Conexión";
-                window.updateUI();
+                showApp();
             }
         };
 
@@ -71,23 +78,36 @@
                     localState.completedDays = data.completedDays || [];
                     localState.reflections = data.reflections || [];
                     localState.pendingTasks = data.pendingTasks || [];
+                    
                     if (data.taskStates) {
                         data.taskStates.forEach((dayTasks, dIdx) => {
-                            dayTasks.forEach((done, tIdx) => {
-                                if (window.plan[dIdx] && window.plan[dIdx].tasks[tIdx]) 
-                                    window.plan[dIdx].tasks[tIdx].done = done;
-                            });
+                            if (window.plan[dIdx]) {
+                                dayTasks.forEach((done, tIdx) => {
+                                    if (window.plan[dIdx].tasks[tIdx]) 
+                                        window.plan[dIdx].tasks[tIdx].done = done;
+                                });
+                            }
                         });
                     }
                 }
-                statusText.innerText = "Sincronizado";
+                statusText.innerText = "Datos Sincronizados";
+            } catch (error) { 
+                console.error("Load error:", error);
+            }
+        }
+
+        function showApp() {
+            isAppReady = true;
+            loadingOverlay.style.opacity = '0';
+            setTimeout(() => {
+                loadingOverlay.style.display = 'none';
                 window.updateUI();
                 window.renderReflections();
-            } catch (error) { console.error(error); }
+            }, 500);
         }
 
         window.saveData = async () => {
-            if (!currentUser || !db) return;
+            if (!currentUser || !db || !isAppReady) return;
             const taskStates = window.plan.map(p => p.tasks.map(t => t.done));
             try {
                 await setDoc(doc(db, 'artifacts', appId, 'users', currentUser.uid, 'progress', 'mainState'), {
@@ -98,7 +118,9 @@
                     taskStates: taskStates,
                     lastUpdated: new Date().toISOString()
                 });
-            } catch (error) { statusText.innerText = "Error Guardado"; }
+            } catch (error) { 
+                statusText.innerText = "Error al Guardar"; 
+            }
         };
 
         window.localState = localState;
@@ -109,6 +131,13 @@
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;600;800&display=swap');
         :root { --bg: #0b1120; --card: #161e31; --accent: #38bdf8; --success: #10b981; --warning: #f59e0b; }
         body { background-color: var(--bg); color: #f8fafc; font-family: 'Plus Jakarta Sans', sans-serif; overflow-x: hidden; }
+        
+        #loadingOverlay {
+            position: fixed; inset: 0; background: var(--bg); z-index: 100;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            transition: opacity 0.5s ease;
+        }
+
         .glass-card { background: var(--card); border: 1px solid #1e293b; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4); }
         .day-box { aspect-ratio: 1/1; border-radius: 12px; font-size: 0.65rem; border: 1px solid #1e293b; cursor: pointer; transition: all 0.3s ease; }
         .day-box.completed { background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(16, 185, 129, 0.05)); border-color: var(--success); color: var(--success); }
@@ -127,13 +156,19 @@
     </style>
 </head>
 <body class="min-h-screen pb-20">
+
+    <div id="loadingOverlay">
+        <div class="w-16 h-16 border-4 border-sky-500/20 border-t-sky-500 rounded-full animate-spin mb-4"></div>
+        <p class="text-[10px] font-black uppercase tracking-[0.3em] text-sky-500 animate-pulse">Sincronizando Estación...</p>
+    </div>
+
     <div class="max-w-3xl mx-auto p-4 md:p-8">
         
         <header class="flex justify-between items-center mb-10 pt-4">
             <div>
                 <h1 class="text-3xl font-extrabold italic text-white uppercase leading-none tracking-tighter">PROYECTO <span class="text-sky-400">14 DÍAS</span></h1>
                 <div class="flex items-center gap-2 mt-2">
-                    <span id="syncStatus" class="text-[9px] font-bold uppercase tracking-widest text-slate-500 italic">Sistema Kaizen Adaptativo</span>
+                    <span id="syncStatus" class="text-[9px] font-bold uppercase tracking-widest text-slate-500 italic">Conectando...</span>
                 </div>
             </div>
             <div class="text-right">
@@ -192,11 +227,11 @@
             
             <div class="flex justify-between items-start mb-8">
                 <div>
-                    <h2 class="text-4xl font-black text-white italic" id="dayTitle">Día 1</h2>
+                    <h2 class="text-4xl font-black text-white italic" id="dayTitle">...</h2>
                     <p class="text-[9px] font-bold text-slate-500 uppercase mt-1">Avance por Tareas • Cierre Flexible</p>
                 </div>
                 <div class="text-right">
-                    <span id="dailyProgressText" class="text-3xl font-black text-white italic tracking-tighter">0/3</span>
+                    <span id="dailyProgressText" class="text-3xl font-black text-white italic tracking-tighter">0/0</span>
                 </div>
             </div>
             
@@ -209,12 +244,18 @@
             <button onclick="window.cerrarDia()" id="closeDayBtn" class="w-full bg-sky-600 text-white font-black py-5 rounded-2xl shadow-lg transition-all uppercase tracking-[0.2em] italic text-sm hover:bg-sky-500">
                 Finalizar Jornada (Cerrar Día)
             </button>
-            <p class="text-[8px] text-center text-slate-500 mt-4 uppercase font-bold">Las tareas no marcadas se moverán automáticamente al día siguiente</p>
         </section>
 
-        <!-- Reflexiones -->
+        <!-- Reflexiones y Exportación -->
         <section class="glass-card rounded-[2rem] p-8">
-            <h3 class="text-[10px] font-bold uppercase tracking-widest text-slate-500 italic mb-6">Bitácora de Progreso</h3>
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-[10px] font-bold uppercase tracking-widest text-slate-500 italic">Bitácora de Progreso</h3>
+                <div class="flex gap-2">
+                    <button onclick="window.exportarJSON()" title="Exportar Datos Crudos" class="text-[10px] font-bold text-slate-500 hover:text-white transition-colors uppercase italic">JSON</button>
+                    <button onclick="window.exportarReporteHTML()" class="bg-slate-800 hover:bg-slate-700 text-white text-[9px] px-3 py-1 rounded-full font-black uppercase tracking-widest transition-all">Generar Reporte Completo</button>
+                </div>
+            </div>
+            
             <div class="flex gap-3 mb-6">
                 <input id="reflexionInput" class="flex-1 bg-slate-950/50 border border-slate-800 rounded-2xl p-4 text-sm focus:outline-none focus:ring-1 focus:ring-sky-500" placeholder="¿Qué aprendiste hoy sobre tu ritmo de trabajo?">
                 <button onclick="window.guardarReflexion()" class="bg-sky-600 px-6 rounded-2xl font-black text-xs uppercase">Post</button>
@@ -224,78 +265,22 @@
     </div>
 
     <script>
-        // Mantenemos el plan original
+        // PLAN DE 14 DÍAS
         window.plan = [
-            { day: 1, tasks: [
-                { concept: "Estabilidad", title: "Carpeta Digital Master", desc: "Estructura Drive (Legal, Propiedad, Finanzas).", done: false },
-                { concept: "Flujo", title: "Registro Sebastián", desc: "Obtener copia digital del registro civil.", done: false },
-                { concept: "Sentido", title: "Foto: Luz Natural", desc: "Capturar rincón con potencial.", done: false }
-            ]},
-            { day: 2, tasks: [
-                { concept: "Estabilidad", title: "Registro Ana", desc: "Escanear y centralizar documento.", done: false },
-                { concept: "Flujo", title: "Preparación Cota", desc: "Identificar grietas y lijar terreno físico.", done: false },
-                { concept: "Sentido", title: "Foto: Textura", desc: "Capturar el material bruto de la casa.", done: false }
-            ]},
-            { day: 3, tasks: [
-                { concept: "Estabilidad", title: "Migración Digital", desc: "Nombrar y organizar archivos hallados.", done: false },
-                { concept: "Flujo", title: "Seguimiento Legal", desc: "Correo al abogado pidiendo estatus.", done: false },
-                { concept: "Sentido", title: "Dibujo de Observación", desc: "Esbozar rincón de la casa por 15 min.", done: false }
-            ]},
-            { day: 4, tasks: [
-                { concept: "Estabilidad", title: "Finalizar Resane", desc: "Aplicar segunda capa de estuco.", done: false },
-                { concept: "Flujo", title: "Inventario Táctico", desc: "Listar siliconas, pinturas y faltantes.", done: false },
-                { concept: "Sentido", title: "Registro 'Antes'", desc: "Foto panorámica del inicio del cambio.", done: false }
-            ]},
-            { day: 5, tasks: [
-                { concept: "Estabilidad", title: "Medición de Vidrios", desc: "Definir dimensiones para el cerramiento.", done: false },
-                { concept: "Flujo", title: "Orden de Herramientas", desc: "Clasificar por uso para agilizar taller.", done: false },
-                { concept: "Sentido", title: "Composición Ikigai", desc: "Alinear 3 objetos cotidianos.", done: false }
-            ]},
-            { day: 6, tasks: [
-                { concept: "Estabilidad", title: "Impermeabilización", desc: "Sellar puntos de humedad críticos.", done: false },
-                { concept: "Flujo", title: "Validación Agenda", desc: "Confirmar citas con técnicos.", done: false },
-                { concept: "Sentido", title: "Foto de Manos", desc: "Capturar el orgullo del trabajo manual.", done: false }
-            ]},
-            { day: 7, tasks: [
-                { concept: "Estabilidad", title: "Base de Color", desc: "Aplicar primera mano de pintura.", done: false },
-                { concept: "Flujo", title: "Limpieza Operativa", desc: "Retirar escombros del sitio.", done: false },
-                { concept: "Sentido", title: "Bitácora de Cambio", desc: "Relato breve sobre el nuevo color.", done: false }
-            ]},
-            { day: 8, tasks: [
-                { concept: "Estabilidad", title: "Acabado Uniforme", desc: "Segunda mano de pintura profesional.", done: false },
-                { concept: "Flujo", title: "Auditoría Legal II", desc: "Verificar respuesta definitiva de abogado.", done: false },
-                { concept: "Sentido", title: "Trazos Libres", desc: "10 min de dibujo abstracto relajante.", done: false }
-            ]},
-            { day: 9, tasks: [
-                { concept: "Estabilidad", title: "Retiro de Protecciones", desc: "Revelar la estructura final limpia.", done: false },
-                { concept: "Flujo", title: "Curaduría Visual", desc: "Elegir las 3 mejores fotos de avance.", done: false },
-                { concept: "Sentido", title: "Foto 'Después'", desc: "Capturar el resultado final logrado.", done: false }
-            ]},
-            { day: 10, tasks: [
-                { concept: "Estabilidad", title: "Borrador de Oferta", desc: "Redactar términos de arriendo.", done: false },
-                { concept: "Flujo", title: "Estudio de Mercado", desc: "Comparar precios reales en Cota.", done: false },
-                { concept: "Sentido", title: "Captura de Ambiente", desc: "Foto con detalle decorativo invitador.", done: false }
-            ]},
-            { day: 11, tasks: [
-                { concept: "Estabilidad", title: "Publicación Oficial", desc: "Subir anuncio a portales activos.", done: false },
-                { concept: "Flujo", title: "Atención Táctica", desc: "Configurar respuestas para prospectos.", done: false },
-                { concept: "Sentido", title: "Dibujo de Habitante", desc: "Imaginar al inquilino ideal.", done: false }
-            ]},
-            { day: 12, tasks: [
-                { concept: "Estabilidad", title: "Presión Legal", desc: "Llamada directa para resolución final.", done: false },
-                { concept: "Flujo", title: "Cierre de Gastos", desc: "Totalizar inversión real Proceso C.", done: false },
-                { concept: "Sentido", title: "Foto: Apertura", desc: "Capturar una ventana abierta.", done: false }
-            ]},
-            { day: 13, tasks: [
-                { concept: "Estabilidad", title: "Segunda Opinión", desc: "Explorar alternativa legal externa.", done: false },
-                { concept: "Flujo", title: "Matriz de Interés", desc: "Comparar candidatos vs meta.", done: false },
-                { concept: "Sentido", title: "Círculo Enso", desc: "Dibujar el zen del proyecto final.", done: false }
-            ]},
-            { day: 14, tasks: [
-                { concept: "Estabilidad", title: "Auditoría de Bloques", desc: "Revisar cada tarea lograda final.", done: false },
-                { concept: "Flujo", title: "Plan de Siguiente Ciclo", desc: "Diseñar próximos 14 días.", done: false },
-                { concept: "Sentido", title: "Foto: Gratitud", desc: "Capturar un detalle de sonrisa.", done: false }
-            ]}
+            { day: 1, tasks: [{ concept: "Estabilidad", title: "Carpeta Digital Master", desc: "Estructura Drive.", done: false }, { concept: "Flujo", title: "Registro Sebastián", desc: "Obtener copia digital.", done: false }, { concept: "Sentido", title: "Foto: Luz Natural", desc: "Capturar potencial.", done: false }]},
+            { day: 2, tasks: [{ concept: "Estabilidad", title: "Registro Ana", desc: "Escanear y centralizar.", done: false }, { concept: "Flujo", title: "Preparación Cota", desc: "Identificar grietas.", done: false }, { concept: "Sentido", title: "Foto: Textura", desc: "Capturar material bruto.", done: false }]},
+            { day: 3, tasks: [{ concept: "Estabilidad", title: "Migración Digital", desc: "Nombrar archivos.", done: false }, { concept: "Flujo", title: "Seguimiento Legal", desc: "Correo estatus.", done: false }, { concept: "Sentido", title: "Dibujo de Observación", desc: "Esbozar rincón.", done: false }]},
+            { day: 4, tasks: [{ concept: "Estabilidad", title: "Finalizar Resane", desc: "Segunda capa estuco.", done: false }, { concept: "Flujo", title: "Inventario Táctico", desc: "Listar pinturas.", done: false }, { concept: "Sentido", title: "Registro 'Antes'", desc: "Foto panorámica.", done: false }]},
+            { day: 5, tasks: [{ concept: "Estabilidad", title: "Medición de Vidrios", desc: "Dimensiones cerramiento.", done: false }, { concept: "Flujo", title: "Orden de Herramientas", desc: "Clasificar taller.", done: false }, { concept: "Sentido", title: "Composición Ikigai", desc: "3 objetos cotidianos.", done: false }]},
+            { day: 6, tasks: [{ concept: "Estabilidad", title: "Impermeabilización", desc: "Sellar humedad.", done: false }, { concept: "Flujo", title: "Validación Agenda", desc: "Citas técnicos.", done: false }, { concept: "Sentido", title: "Foto de Manos", desc: "Orgullo manual.", done: false }]},
+            { day: 7, tasks: [{ concept: "Estabilidad", title: "Base de Color", desc: "Primera mano pintura.", done: false }, { concept: "Flujo", title: "Limpieza Operativa", desc: "Retirar escombros.", done: false }, { concept: "Sentido", title: "Bitácora de Cambio", desc: "Relato nuevo color.", done: false }]},
+            { day: 8, tasks: [{ concept: "Estabilidad", title: "Acabado Uniforme", desc: "Segunda mano pintura.", done: false }, { concept: "Flujo", title: "Auditoría Legal II", desc: "Verificar respuesta.", done: false }, { concept: "Sentido", title: "Trazos Libres", desc: "10 min dibujo.", done: false }]},
+            { day: 9, tasks: [{ concept: "Estabilidad", title: "Retiro de Protecciones", desc: "Revelar estructura.", done: false }, { concept: "Flujo", title: "Curaduría Visual", desc: "Elegir fotos avance.", done: false }, { concept: "Sentido", title: "Foto 'Después'", desc: "Resultado logrado.", done: false }]},
+            { day: 10, tasks: [{ concept: "Estabilidad", title: "Borrador de Oferta", desc: "Términos arriendo.", done: false }, { concept: "Flujo", title: "Estudio de Mercado", desc: "Comparar precios.", done: false }, { concept: "Sentido", title: "Captura de Ambiente", desc: "Detalle invitador.", done: false }]},
+            { day: 11, tasks: [{ concept: "Estabilidad", title: "Publicación Oficial", desc: "Subir portales.", done: false }, { concept: "Flujo", title: "Atención Táctica", desc: "Respuestas prospectos.", done: false }, { concept: "Sentido", title: "Dibujo de Habitante", desc: "Inquilino ideal.", done: false }]},
+            { day: 12, tasks: [{ concept: "Estabilidad", title: "Presión Legal", desc: "Llamada directa.", done: false }, { concept: "Flujo", title: "Cierre de Gastos", desc: "Inversión real.", done: false }, { concept: "Sentido", title: "Foto: Apertura", desc: "Ventana abierta.", done: false }]},
+            { day: 13, tasks: [{ concept: "Estabilidad", title: "Segunda Opinión", desc: "Alternativa externa.", done: false }, { concept: "Flujo", title: "Matriz de Interés", desc: "Comparar candidatos.", done: false }, { concept: "Sentido", title: "Círculo Enso", desc: "Zen del proyecto.", done: false }]},
+            { day: 14, tasks: [{ concept: "Estabilidad", title: "Auditoría de Bloques", desc: "Revisar tareas.", done: false }, { concept: "Flujo", title: "Plan Siguiente Ciclo", desc: "Diseñar próximos días.", done: false }, { concept: "Sentido", title: "Foto: Gratitud", desc: "Detalle sonrisa.", done: false }]}
         ];
 
         let radarChart = null;
@@ -326,13 +311,9 @@
         window.updateUI = () => {
             const dayIdx = (window.localState.currentDay || 1) - 1;
             const currentDayPlan = window.plan[dayIdx];
-            
             document.getElementById('dayTitle').innerText = `Día ${currentDayPlan.day}`;
             
-            // Combinar tareas del plan actual con las arrastradas (si estamos en el día actual del usuario)
             let activeTasks = [...currentDayPlan.tasks];
-            
-            // Solo mostrar pendientes arrastradas si estamos viendo el "día de hoy" según el estado
             const isToday = window.localState.currentDay === (window.localState.completedDays.length + 1);
             if(isToday && window.localState.pendingTasks.length > 0) {
                 document.getElementById('rolloverAlert').classList.remove('hidden');
@@ -348,14 +329,8 @@
             activeTasks.forEach((t, i) => {
                 if(t.done) tasksDoneCount++;
                 const div = document.createElement('div');
-                const isDragged = t.isDragged ? 'dragged' : '';
-                div.className = `task-item p-4 rounded-2xl border border-slate-800 bg-slate-900/40 flex items-center justify-between ${t.done ? 'done' : ''} ${isDragged}`;
-                
-                div.onclick = () => { 
-                    t.done = !t.done; 
-                    window.updateUI(); 
-                    window.saveData(); 
-                };
+                div.className = `task-item p-4 rounded-2xl border border-slate-800 bg-slate-900/40 flex items-center justify-between ${t.done ? 'done' : ''} ${t.isDragged ? 'dragged' : ''}`;
+                div.onclick = () => { t.done = !t.done; window.updateUI(); window.saveData(); };
                 
                 let cColor = "text-sky-400";
                 if(t.concept === "Flujo") cColor = "text-amber-400";
@@ -364,10 +339,10 @@
                 div.innerHTML = `
                     <div class="flex items-center gap-4">
                         <div class="custom-checkbox"></div>
-                        <div>
+                        <div class="flex-1">
                             <div class="flex gap-2 items-center">
                                 <p class="text-[7px] font-black uppercase ${cColor}">${t.concept}</p>
-                                ${t.isDragged ? '<span class="text-[6px] bg-amber-500/20 text-amber-500 px-1 rounded font-bold">REPROGRAMADA</span>' : ''}
+                                ${t.isDragged ? '<span class="text-[6px] bg-amber-500/20 text-amber-500 px-1 rounded font-bold">ARRASTRADA</span>' : ''}
                             </div>
                             <h4 class="text-sm font-bold text-white mb-0.5">${t.title}</h4>
                             <p class="text-[10px] text-slate-400 leading-tight">${t.desc}</p>
@@ -381,11 +356,7 @@
             const progPerc = activeTasks.length > 0 ? (tasksDoneCount/activeTasks.length)*100 : 0;
             document.getElementById('dailyProgressBar').style.width = `${progPerc}%`;
 
-            // MÉTRICAS GLOBALES
-            let totalEst = 0, doneEst = 0;
-            let totalFlu = 0, doneFlu = 0;
-            let totalSen = 0, doneSen = 0;
-
+            let totalEst = 0, doneEst = 0, totalFlu = 0, doneFlu = 0, totalSen = 0, doneSen = 0;
             window.plan.forEach(d => {
                 d.tasks.forEach(t => {
                     if(t.concept === "Estabilidad") { totalEst++; if(t.done) doneEst++; }
@@ -394,9 +365,9 @@
                 });
             });
 
-            const percEst = (doneEst/totalEst)*100;
-            const percFlu = (doneFlu/totalFlu)*100;
-            const percSen = (doneSen/totalSen)*100;
+            const percEst = totalEst ? (doneEst/totalEst)*100 : 0;
+            const percFlu = totalFlu ? (doneFlu/totalFlu)*100 : 0;
+            const percSen = totalSen ? (doneSen/totalSen)*100 : 0;
 
             document.getElementById('fillEstabilidad').style.height = `${percEst}%`;
             document.getElementById('fillFlujo').style.height = `${percFlu}%`;
@@ -408,22 +379,15 @@
                 document.getElementById('radarValue').innerText = Math.round((percEst + percFlu + percSen)/3) + "%";
             }
 
-            // Calendario
             const grid = document.getElementById('calendarGrid');
             grid.innerHTML = '';
             for(let i=1; i<=14; i++) {
                 const div = document.createElement('div');
                 const isCompleted = window.localState.completedDays.includes(i);
-                // Determinar si fue cumplimiento parcial o total
                 const dayData = window.plan[i-1];
                 const allDone = dayData.tasks.every(tk => tk.done);
-                const someDone = dayData.tasks.some(tk => tk.done);
-                
                 let stateClass = '';
-                if(isCompleted) {
-                    stateClass = allDone ? 'completed' : 'partial';
-                }
-
+                if(isCompleted) stateClass = allDone ? 'completed' : 'partial';
                 div.className = `day-box flex items-center justify-center font-black ${i === window.localState.currentDay ? 'current' : ''} ${stateClass}`;
                 div.innerText = i;
                 div.onclick = () => { window.localState.currentDay = i; window.updateUI(); };
@@ -434,26 +398,13 @@
         window.cerrarDia = () => {
             const dayIdx = window.localState.currentDay - 1;
             const currentDayTasks = window.plan[dayIdx].tasks;
-            
-            // 1. Identificar tareas NO hechas del plan original del día
             const leftovers = currentDayTasks.filter(t => !t.done).map(t => ({...t, isDragged: true}));
-            
-            // 2. Identificar tareas NO hechas que ya venían arrastradas
             const pendingLeftovers = window.localState.pendingTasks.filter(t => !t.done);
-            
-            // 3. El nuevo "bolsón" de pendientes para mañana
             window.localState.pendingTasks = [...pendingLeftovers, ...leftovers];
-
-            // 4. Marcar día como completado (aunque sea parcial)
             if(!window.localState.completedDays.includes(window.localState.currentDay)) {
                 window.localState.completedDays.push(window.localState.currentDay);
             }
-
-            // 5. Avanzar calendario si hay espacio
-            if(window.localState.currentDay < 14) {
-                window.localState.currentDay++;
-            }
-
+            if(window.localState.currentDay < 14) window.localState.currentDay++;
             window.updateUI();
             window.saveData();
         };
@@ -461,7 +412,7 @@
         window.guardarReflexion = () => {
             const input = document.getElementById('reflexionInput');
             if(!input.value) return;
-            window.localState.reflections.push({ day: window.localState.currentDay, text: input.value });
+            window.localState.reflections.push({ day: window.localState.currentDay, text: input.value, timestamp: new Date().toISOString() });
             input.value = '';
             window.renderReflections();
             window.saveData();
@@ -478,10 +429,121 @@
             });
         };
 
+        // EXPORTACIÓN Y REPORTES AVANZADOS
+        window.exportarJSON = () => {
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(window.localState, null, 2));
+            const downloadAnchorNode = document.createElement('a');
+            downloadAnchorNode.setAttribute("href", dataStr);
+            downloadAnchorNode.setAttribute("download", `progreso_completo_${new Date().toISOString().split('T')[0]}.json`);
+            document.body.appendChild(downloadAnchorNode);
+            downloadAnchorNode.click();
+            downloadAnchorNode.remove();
+        };
+
+        window.exportarReporteHTML = () => {
+            const metrics = {
+                est: document.getElementById('fillEstabilidad').style.height,
+                flu: document.getElementById('fillFlujo').style.height,
+                sen: document.getElementById('fillSentido').style.height,
+                total: document.getElementById('radarValue').innerText
+            };
+            
+            const reflectionsHTML = window.localState.reflections.length > 0 
+                ? window.localState.reflections.map(r => `
+                    <div style="border-left: 3px solid #38bdf8; padding-left: 15px; margin-bottom: 20px;">
+                        <span style="font-size: 11px; font-weight: bold; color: #64748b; text-transform: uppercase;">Día ${r.day}</span>
+                        <p style="margin: 5px 0 0 0; font-size: 14px; color: #1e293b; font-style: italic;">"${r.text}"</p>
+                    </div>`).join('')
+                : "<p>No hay reflexiones registradas.</p>";
+
+            // Generar tabla de tareas completadas
+            let tasksTableHTML = "";
+            window.plan.forEach(d => {
+                const doneCount = d.tasks.filter(t => t.done).length;
+                if(doneCount > 0) {
+                    tasksTableHTML += `
+                        <div style="margin-bottom: 15px;">
+                            <h3 style="font-size: 12px; margin-bottom: 5px; color: #38bdf8;">Día ${d.day} (${doneCount}/${d.tasks.length} tareas)</h3>
+                            <ul style="margin: 0; font-size: 12px; color: #475569;">
+                                ${d.tasks.map(t => `<li style="${t.done ? '' : 'text-decoration: line-through; opacity: 0.5'}">${t.title} - ${t.concept}</li>`).join('')}
+                            </ul>
+                        </div>
+                    `;
+                }
+            });
+
+            const htmlReport = `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="UTF-8">
+                    <title>Reporte de Progreso - Estación Ikigai</title>
+                    <style>
+                        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 50px; color: #0f172a; line-height: 1.5; background: #fff; }
+                        .container { max-width: 800px; margin: 0 auto; }
+                        .header { border-bottom: 4px solid #38bdf8; padding-bottom: 25px; margin-bottom: 40px; }
+                        .header h1 { margin: 0; font-size: 28px; font-style: italic; font-weight: 900; letter-spacing: -1px; }
+                        .meta { font-size: 11px; font-family: monospace; color: #64748b; margin-top: 10px; }
+                        .metrics { display: flex; gap: 15px; margin-bottom: 40px; }
+                        .metric-card { flex: 1; padding: 20px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; text-align: center; }
+                        .metric-card h4 { margin: 0 0 10px 0; font-size: 10px; text-transform: uppercase; color: #64748b; letter-spacing: 1px; }
+                        .metric-value { font-size: 32px; font-weight: 800; color: #38bdf8; }
+                        .section-title { font-size: 12px; font-weight: bold; text-transform: uppercase; color: #94a3b8; letter-spacing: 2px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; margin-bottom: 20px; }
+                        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="header">
+                            <h1>PROYECTO 14 DÍAS: INFORME DE PROGRESO</h1>
+                            <div class="meta">
+                                USUARIO: ${document.getElementById('userIdDisplay').innerText} | 
+                                GENERADO: ${new Date().toLocaleString('es-ES')}
+                            </div>
+                        </div>
+
+                        <div class="section-title">Resumen de Arquitectura</div>
+                        <div class="metrics">
+                            <div class="metric-card"><h4>Estabilidad</h4><div class="metric-value">${metrics.est}</div></div>
+                            <div class="metric-card"><h4>Flujo</h4><div class="metric-value">${metrics.flu}</div></div>
+                            <div class="metric-card"><h4>Sentido</h4><div class="metric-value">${metrics.sen}</div></div>
+                            <div class="metric-card" style="background: #0f172a;">
+                                <h4 style="color: #38bdf8;">Balance Total</h4>
+                                <div class="metric-value" style="color: #fff;">${metrics.total}</div>
+                            </div>
+                        </div>
+
+                        <div class="grid">
+                            <div>
+                                <div class="section-title">Bitácora de Reflexiones</div>
+                                ${reflectionsHTML}
+                            </div>
+                            <div>
+                                <div class="section-title">Tareas Ejecutadas</div>
+                                ${tasksTableHTML || '<p style="font-size:12px; color:#94a3b8;">No se han completado tareas aún.</p>'}
+                            </div>
+                        </div>
+
+                        <div style="margin-top: 50px; padding-top: 20px; border-top: 1px solid #eee; font-size: 10px; color: #94a3b8; text-align: center;">
+                            Fin del reporte. Estación Ikigai-Kaizen v2.5
+                        </div>
+                    </div>
+                </body>
+                </html>
+            `;
+            
+            const dataStr = "data:text/html;charset=utf-8," + encodeURIComponent(htmlReport);
+            const downloadAnchorNode = document.createElement('a');
+            downloadAnchorNode.setAttribute("href", dataStr);
+            downloadAnchorNode.setAttribute("download", `Reporte_Progreso_ProcesoC.html`);
+            document.body.appendChild(downloadAnchorNode);
+            downloadAnchorNode.click();
+            downloadAnchorNode.remove();
+        };
+
         document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('dateDisplay').innerText = new Date().toLocaleDateString('es-ES', { day:'2-digit', month:'short' }).toUpperCase();
             initRadar();
-            window.updateUI();
         });
     </script>
 </body>
