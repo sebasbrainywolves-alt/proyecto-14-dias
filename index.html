@@ -11,7 +11,6 @@
         import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Configuración Global
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'ikigai-brainy-wolves-v4';
         
         window.localState = {
@@ -23,6 +22,36 @@
         };
 
         let db = null, auth = null, currentUser = null;
+        let isViewMode = false;
+
+        // --- Lógica de compartir ---
+        window.generarLinkCompartido = () => {
+            if (!currentUser && !isViewMode) {
+                window.showToast("No se detecta usuario activo.", "error");
+                return;
+            }
+            const token = "BRAINY2026";
+            const uid = currentUser?.uid || new URLSearchParams(window.location.search).get('view');
+            const baseUrl = window.location.origin + window.location.pathname;
+            const link = `${baseUrl}?view=${uid}&token=${token}`;
+
+            const el = document.createElement('textarea');
+            el.value = link;
+            document.body.appendChild(el);
+            el.select();
+            document.execCommand('copy');
+            document.body.removeChild(el);
+            
+            window.showToast("¡Link de progreso copiado!", "success");
+        };
+
+        window.showToast = (msg, type) => {
+            const toast = document.getElementById('toast');
+            toast.innerText = msg;
+            toast.className = `fixed bottom-10 left-1/2 -translate-x-1/2 px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest z-[200] transition-all shadow-2xl ${type === 'success' ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white'}`;
+            toast.style.display = 'block';
+            setTimeout(() => toast.style.display = 'none', 3000);
+        };
 
         const loadFromLocalStorage = () => {
             const saved = localStorage.getItem(`ikigai_v4_${appId}`);
@@ -55,7 +84,18 @@
         };
 
         const initFirebase = async () => {
-            loadFromLocalStorage(); 
+            const params = new URLSearchParams(window.location.search);
+            const viewUid = params.get('view');
+            const token = params.get('token');
+            
+            // Modo Observador habilitado si hay token correcto
+            if (viewUid && token === "BRAINY2026") {
+                isViewMode = true;
+                document.body.classList.add('view-only-mode');
+            } else {
+                loadFromLocalStorage(); 
+            }
+
             window.updateUI();
             window.renderReflections();
 
@@ -75,8 +115,12 @@
                     onAuthStateChanged(auth, async (user) => {
                         if (user) {
                             currentUser = user;
-                            document.getElementById('userIdDisplay').innerText = `ID: ${user.uid}`;
-                            const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'progress', 'mainState');
+                            const targetUid = isViewMode ? viewUid : user.uid;
+                            
+                            const userIdElem = document.getElementById('userIdDisplay');
+                            if(userIdElem) userIdElem.innerText = isViewMode ? `MODO OBSERVADOR: ${targetUid.substring(0,8)}` : `ID: ${user.uid}`;
+                            
+                            const docRef = doc(db, 'artifacts', appId, 'users', targetUid, 'progress', 'mainState');
                             onSnapshot(docRef, (docSnap) => {
                                 if (docSnap.exists()) {
                                     let data = docSnap.data();
@@ -91,13 +135,16 @@
                                 }
                             }, (error) => console.error("Firestore Error:", error));
                         }
-                        document.getElementById('loadingOverlay').style.display = 'none';
+                        const overlay = document.getElementById('loadingOverlay');
+                        if(overlay) overlay.style.display = 'none';
                     });
                 } else {
-                    document.getElementById('loadingOverlay').style.display = 'none';
+                    const overlay = document.getElementById('loadingOverlay');
+                    if(overlay) overlay.style.display = 'none';
                 }
             } catch (err) { 
-                document.getElementById('loadingOverlay').style.display = 'none';
+                const overlay = document.getElementById('loadingOverlay');
+                if(overlay) overlay.style.display = 'none';
             }
         };
 
@@ -110,6 +157,8 @@
         };
 
         window.saveData = async () => {
+            if (isViewMode) return; // No guardar si solo estamos viendo
+
             const states = window.plan.map(p => p.tasks.map(t => ({
                 done: t.done,
                 steps: t.steps.map(s => s.done)
@@ -154,20 +203,26 @@
         .ikigai-input { background: transparent; border: none; border-bottom: 1px solid #1e293b; width: 100%; font-size: 11px; color: #94a3b8; outline: none; transition: 0.3s; }
         .ikigai-input:focus { border-color: var(--accent); color: white; }
         
-        /* Modal Style */
         .modal-backdrop { background: rgba(0,0,0,0.9); backdrop-filter: blur(12px); }
         .report-label { font-size: 9px; font-weight: 900; color: #64748b; text-transform: uppercase; letter-spacing: 0.15em; }
         
-        /* Heartbeat Animation */
+        /* Modo Observador */
+        .view-only-mode textarea, .view-only-mode button:not(#closeReport):not(#shareReportBtn) { pointer-events: none; opacity: 0.7; }
+        .view-only-mode .day-box { pointer-events: auto; opacity: 1; }
+
         @keyframes heartbeat {
             0% { transform: scale(1); }
             50% { transform: scale(1.1); opacity: 0.8; }
             100% { transform: scale(1); }
         }
         .pulse { animation: heartbeat 2s ease-in-out infinite; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
 <body class="min-h-screen pb-20 p-4 md:p-8">
+
+    <div id="toast" style="display:none"></div>
 
     <div id="loadingOverlay" class="fixed inset-0 bg-[#0b1120] z-50 flex items-center justify-center text-center">
         <div>
@@ -184,13 +239,16 @@
                     <h3 class="text-slate-900 font-black italic uppercase text-lg tracking-tighter">Reporte Integral <span class="text-sky-600">Ikigai-Kaizen</span></h3>
                     <p class="text-[9px] text-slate-400 font-bold uppercase tracking-widest">SISTEMA DE CONTROL PROCESO C • BRAINY WOLVES</p>
                 </div>
-                <button onclick="document.getElementById('reportModal').classList.add('hidden')" class="bg-slate-900 text-white hover:bg-black p-3 rounded-full px-6 text-[10px] font-bold uppercase transition-all">Cerrar</button>
+                <div class="flex gap-2">
+                    <button id="shareReportBtn" onclick="window.generarLinkCompartido()" class="bg-sky-500 text-white hover:bg-sky-600 p-3 rounded-full px-6 text-[10px] font-bold uppercase transition-all">Copiar Link Público</button>
+                    <button id="closeReport" onclick="document.getElementById('reportModal').classList.add('hidden')" class="bg-slate-900 text-white hover:bg-black p-3 rounded-full px-6 text-[10px] font-bold uppercase transition-all">Cerrar</button>
+                </div>
             </div>
             <div id="reportContent" class="overflow-y-auto p-8 md:p-16 bg-white text-slate-800">
                 <!-- Generado dinámicamente -->
             </div>
             <div class="p-6 bg-slate-900 text-center">
-                <p class="text-[9px] text-slate-500 font-bold uppercase tracking-widest">Este documento es propiedad intelectual de Sebas Brainy Wolves - 2026</p>
+                <p class="text-[9px] text-slate-500 font-bold uppercase tracking-widest">Este documento es propiedad de Sebas Brainy Wolves - 2026</p>
             </div>
         </div>
     </div>
@@ -274,7 +332,7 @@
                 <div class="flex justify-between items-end">
                     <div>
                         <h2 id="dayTitle" class="text-4xl font-black italic tracking-tighter uppercase">Día 1</h2>
-                        <p class="text-[10px] font-bold text-slate-500 uppercase mt-1">Auditando objetivos actuales</p>
+                        <p id="dayContext" class="text-[10px] font-bold text-slate-500 uppercase mt-1">Auditando objetivos actuales</p>
                     </div>
                     <span id="dailyCount" class="text-xs font-mono font-bold text-sky-400 bg-sky-400/10 px-4 py-2 rounded-xl border border-sky-400/20">0 / 0</span>
                 </div>
@@ -314,72 +372,72 @@
 
     <script>
         const rawPlan = [
-            { day: 1, tasks: [
+            { day: 1, context: "Auditando objetivos actuales", tasks: [
                 { concept: "Estabilidad", title: "Carpeta Digital Master", steps: ["Estructura Drive", "Configuración permisos", "Validación nomenclatura"] },
                 { concept: "Flujo", title: "Registro Sebastián", steps: ["Copia digital documentos", "Validación de versiones", "Subida a repositorio"] },
                 { concept: "Sentido", title: "Foto: Luz Natural", steps: ["Encuadre potencial", "Captura lumínica", "Nota de percepción"] }
             ]},
-            { day: 2, tasks: [
+            { day: 2, context: "Mapeo de prioridades", tasks: [
                 { concept: "Estabilidad", title: "Registro Ana", steps: ["Escaneo alta calidad", "Centralización Drive", "Checklist legal"] },
                 { concept: "Flujo", title: "Preparación Cota", steps: ["Mapeo de grietas", "Marcación técnica", "Fotos de estado inicial"] },
                 { concept: "Sentido", title: "Foto: Textura", steps: ["Selección material bruto", "Captura detalle", "Registro táctil"] }
             ]},
-            { day: 3, tasks: [
+            { day: 3, context: "Optimización de procesos", tasks: [
                 { concept: "Estabilidad", title: "Migración Digital", steps: ["Renombrar archivos", "Limpieza de duplicados", "Back-up seguridad"] },
                 { concept: "Flujo", title: "Seguimiento Legal", steps: ["Revisión bandeja entrada", "Redacción seguimiento", "Confirmación de envío"] },
                 { concept: "Sentido", title: "Dibujo Observación", steps: ["Elección de rincón", "Boceto estructural", "Reflexión espacial"] }
             ]},
-            { day: 4, tasks: [
+            { day: 4, context: "Acción material inmediata", tasks: [
                 { concept: "Estabilidad", title: "Finalizar Resane", steps: ["Preparación mezcla", "Aplicación segunda capa", "Verificación nivel"] },
                 { concept: "Flujo", title: "Inventario Táctico", steps: ["Conteo latas pintura", "Clasificación colores", "Actualización excel stock"] },
                 { concept: "Sentido", title: "Registro 'Antes'", steps: ["Foto panorámica 1", "Ajuste de exposición", "Guardar referencia"] }
             ]},
-            { day: 5, tasks: [
+            { day: 5, context: "Estructura y detalle", tasks: [
                 { concept: "Estabilidad", title: "Medición Vidrios", steps: ["Toma de dimensiones", "Dibujo de croquis", "Cálculo de áreas"] },
                 { concept: "Flujo", title: "Orden Herramientas", steps: ["Clasificación por tipo", "Limpieza de equipos", "Organización vertical"] },
                 { concept: "Sentido", title: "Composición Ikigai", steps: ["Elección 3 objetos", "Foto composición", "Nota filosófica"] }
             ]},
-            { day: 6, tasks: [
+            { day: 6, context: "Protección y blindaje", tasks: [
                 { concept: "Estabilidad", title: "Impermeabilización", steps: ["Identificación focos", "Aplicación sellador", "Test de absorción"] },
                 { concept: "Flujo", title: "Validación Agenda", steps: ["Revisión citas", "Confirmación técnicos", "Bloqueo de horario"] },
                 { concept: "Sentido", title: "Foto de Manos", steps: ["Captura esfuerzo", "Registro manual", "Nota de orgullo"] }
             ]},
-            { day: 7, tasks: [
+            { day: 7, context: "Transformación visual", tasks: [
                 { concept: "Estabilidad", title: "Base de Color", steps: ["Preparación superficie", "Aplicación primera mano", "Control de goteo"] },
                 { concept: "Flujo", title: "Limpieza Operativa", steps: ["Retiro de escombros", "Eliminación polvo", "Orden de insumos"] },
                 { concept: "Sentido", title: "Bitácora de Cambio", steps: ["Relato nuevo color", "Foto de transición", "Reflexión emocional"] }
             ]},
-            { day: 8, tasks: [
+            { day: 8, context: "Consolidación estética", tasks: [
                 { concept: "Estabilidad", title: "Acabado Uniforme", steps: ["Segunda mano pintura", "Retoque bordes", "Verificación brillo"] },
                 { concept: "Flujo", title: "Auditoría Legal II", steps: ["Revisión documentos", "Actualización estatus", "Archivador físico/dig"] },
                 { concept: "Sentido", title: "Trazos Libres", steps: ["Dibujo espontáneo", "Nota de flujo", "Registro gráfico"] }
             ]},
-            { day: 9, tasks: [
+            { day: 9, context: "Revelado y curaduría", tasks: [
                 { concept: "Estabilidad", title: "Retiro Protecciones", steps: ["Remoción cintas", "Limpieza vidrios", "Revelado final"] },
                 { concept: "Flujo", title: "Curaduría Visual", steps: ["Selección 10 fotos", "Edición básica", "Organización portafolio"] },
                 { concept: "Sentido", title: "Foto 'Después'", steps: ["Réplica ángulo 'Antes'", "Captura final", "Comparativa visual"] }
             ]},
-            { day: 10, tasks: [
+            { day: 10, context: "Proyección estratégica", tasks: [
                 { concept: "Estabilidad", title: "Borrador de Oferta", steps: ["Definición canon", "Redacción términos", "Revisión ortográfica"] },
                 { concept: "Flujo", title: "Estudio de Mercado", steps: ["Benchmarking zona", "Matriz comparativa", "Proyección rentabilidad"] },
                 { concept: "Sentido", title: "Captura Ambiente", steps: ["Foto detalle hogar", "Nota atmósfera", "Registro calidez"] }
             ]},
-            { day: 11, tasks: [
+            { day: 11, context: "Lanzamiento y gestión", tasks: [
                 { concept: "Estabilidad", title: "Publicación Oficial", steps: ["Subida portales", "Redacción copy", "Gestión destacados"] },
                 { concept: "Flujo", title: "Atención Táctica", steps: ["Gestión mensajes", "Agendar visitas", "Checklist interesados"] },
                 { concept: "Sentido", title: "Dibujo de Habitante", steps: ["Boceto perfil ideal", "Nota de conexión", "Registro mental"] }
             ]},
-            { day: 12, tasks: [
+            { day: 12, context: "Cierre de ciclos", tasks: [
                 { concept: "Estabilidad", title: "Presión Legal", steps: ["Llamada abogado", "Estatus proceso", "Nota de seguimiento"] },
                 { concept: "Flujo", title: "Cierre de Gastos", steps: ["Conciliación facturas", "Balance inversión", "Nota rentabilidad"] },
                 { concept: "Sentido", title: "Foto: Apertura", steps: ["Captura ventana/luz", "Encuadre futuro", "Registro apertura"] }
             ]},
-            { day: 13, tasks: [
+            { day: 13, context: "Validación externa", tasks: [
                 { concept: "Estabilidad", title: "Segunda Opinión", steps: ["Consulta externa", "Visita técnica", "Consolidado técnico"] },
                 { concept: "Flujo", title: "Matriz de Interés", steps: ["Evaluación candidatos", "Elección top 3", "Llamadas filtrado"] },
                 { concept: "Sentido", title: "Círculo Enso", steps: ["Práctica dibujo", "Meditación proyecto", "Registro espiritual"] }
             ]},
-            { day: 14, tasks: [
+            { day: 14, context: "Auditoría final y Kaizen", tasks: [
                 { concept: "Estabilidad", title: "Auditoría de Bloques", steps: ["Revisión 14 días", "Cierre técnicos", "Análisis de fallos"] },
                 { concept: "Flujo", title: "Plan Siguiente Ciclo", steps: ["Definición metas mes", "Calendario operativo", "Diseño Kaizen"] },
                 { concept: "Sentido", title: "Foto: Gratitud", steps: ["Captura momento", "Nota de cierre", "Registro felicidad"] }
@@ -394,7 +452,37 @@
             }))
         }));
 
-        let radarChart = null;
+        let radarChartInstance = null;
+
+        window.initRadar = () => {
+            const ctx = document.getElementById('radarChart').getContext('2d');
+            radarChartInstance = new Chart(ctx, {
+                type: 'radar',
+                data: {
+                    labels: ['Estabilidad', 'Flujo', 'Sentido'],
+                    datasets: [{
+                        label: 'Rendimiento %',
+                        data: [0, 0, 0],
+                        backgroundColor: 'rgba(56, 189, 248, 0.2)',
+                        borderColor: '#38bdf8',
+                        borderWidth: 2,
+                        pointBackgroundColor: '#38bdf8'
+                    }]
+                },
+                options: {
+                    scales: {
+                        r: {
+                            beginAtZero: true,
+                            max: 100,
+                            ticks: { display: false },
+                            grid: { color: 'rgba(148, 163, 184, 0.1)' },
+                            angleLines: { color: 'rgba(148, 163, 184, 0.1)' }
+                        }
+                    },
+                    plugins: { legend: { display: false } }
+                }
+            });
+        };
 
         window.toggleStep = (dayIdx, taskIdx, stepIdx) => {
             const task = window.plan[dayIdx].tasks[taskIdx];
@@ -408,6 +496,7 @@
             const dayIdx = window.localState.currentDay - 1;
             const currentPlan = window.plan[dayIdx];
             document.getElementById('dayTitle').innerText = `Día ${currentPlan.day}`;
+            document.getElementById('dayContext').innerText = currentPlan.context;
             
             const taskList = document.getElementById('taskList');
             taskList.innerHTML = '';
@@ -446,7 +535,6 @@
 
             document.getElementById('dailyCount').innerText = `${cSteps} / ${tSteps} OBJETIVOS`;
 
-            // Totales para métricas
             let allT=0, allD=0, eT=0, eD=0, fT=0, fD=0, sT=0, sD=0;
             window.plan.forEach(d => d.tasks.forEach(t => {
                 t.steps.forEach(s => {
@@ -467,9 +555,9 @@
             document.getElementById('percFlu').innerText = pF + "%";
             document.getElementById('percSen').innerText = pS + "%";
             
-            if(radarChart) {
-                radarChart.data.datasets[0].data = [pE, pF, pS];
-                radarChart.update();
+            if(radarChartInstance) {
+                radarChartInstance.data.datasets[0].data = [pE, pF, pS];
+                radarChartInstance.update();
             }
 
             const grid = document.getElementById('calendarGrid');
@@ -508,164 +596,82 @@
 
         window.renderReflections = () => {
             const log = document.getElementById('historyLog');
-            log.innerHTML = '';
-            [...window.localState.reflections].reverse().forEach(r => {
-                log.innerHTML += `
-                    <div class="text-[10px] p-4 bg-slate-900 border border-slate-800 rounded-2xl">
-                        <div class="flex justify-between items-center mb-2">
-                            <span class="font-black text-sky-400 uppercase italic">Día ${r.day}</span>
-                            <span class="text-[8px] text-slate-600 font-mono">${r.ts}</span>
-                        </div>
-                        <p class="text-slate-400 leading-relaxed">${r.text}</p>
-                    </div>`;
-            });
+            if(!log) return;
+            log.innerHTML = window.localState.reflections.slice().reverse().map(r => `
+                <div class="bg-slate-900 border border-slate-800 p-3 rounded-xl">
+                    <div class="flex justify-between items-center mb-1">
+                        <span class="text-[8px] font-black text-sky-400 uppercase tracking-widest">Día ${r.day} • ${r.ts}</span>
+                    </div>
+                    <p class="text-[10px] text-slate-300 leading-relaxed">${r.text}</p>
+                </div>
+            `).join('');
         };
 
         window.generarReporte = () => {
-            const container = document.getElementById('reportContent');
-            const now = new Date();
+            const modal = document.getElementById('reportModal');
+            const content = document.getElementById('reportContent');
+            modal.classList.remove('hidden');
+
+            const ikigai = window.localState.ikigaiNotes;
             
-            let allT=0, allD=0, eT=0, eD=0, fT=0, fD=0, sT=0, sD=0;
-            window.plan.forEach(d => d.tasks.forEach(t => {
-                t.steps.forEach(s => {
-                    allT++; if(s.done) allD++;
-                    if(t.concept === "Estabilidad") { eT++; if(s.done) eD++; }
-                    if(t.concept === "Flujo") { fT++; if(s.done) fD++; }
-                    if(t.concept === "Sentido") { sT++; if(s.done) sD++; }
-                });
-            }));
-            const global = Math.round((allD/allT)*100);
-
-            let html = `
-                <div class="space-y-12">
-                    <div class="flex justify-between items-center border-b border-slate-100 pb-8">
-                        <div>
-                            <h2 class="text-3xl font-black italic uppercase tracking-tighter">BRAINY WOLVES <span class="text-sky-600">REPORT</span></h2>
-                            <p class="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em] mt-1">Operational Audit v4.0</p>
-                        </div>
-                        <div class="text-right">
-                            <div class="text-[9px] text-slate-400 font-bold uppercase">Fecha de Emisión</div>
-                            <div class="text-xs font-black font-mono">${now.toLocaleDateString()} ${now.toLocaleTimeString()}</div>
-                        </div>
+            content.innerHTML = `
+                <div class="grid grid-cols-2 gap-8 mb-12 border-b pb-8">
+                    <div>
+                        <div class="report-label">Estado de Propósito</div>
+                        <p class="mt-4 text-sm"><strong>Amas:</strong> ${ikigai.love || 'Sin datos'}</p>
+                        <p class="text-sm"><strong>Necesidad:</strong> ${ikigai.need || 'Sin datos'}</p>
+                        <p class="text-sm"><strong>Paga:</strong> ${ikigai.paid || 'Sin datos'}</p>
+                        <p class="text-sm"><strong>Fortalezas:</strong> ${ikigai.good || 'Sin datos'}</p>
                     </div>
-
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
-                        <div class="text-center md:text-left">
-                            <div class="text-[10px] font-black text-slate-300 uppercase tracking-widest mb-2">Puntaje Global de Ejecución</div>
-                            <div class="text-8xl font-black italic text-slate-900 tracking-tighter">${global}<span class="text-3xl text-sky-500">%</span></div>
-                        </div>
-                        <div class="grid grid-cols-3 gap-4">
-                            <div class="text-center p-4 bg-slate-50 rounded-2xl">
-                                <div class="report-label mb-2">Estabilidad</div>
-                                <div class="text-2xl font-black text-sky-600">${Math.round((eD/eT)*100)}%</div>
+                    <div class="bg-slate-50 p-6 rounded-2xl border border-dashed border-slate-200">
+                        <div class="report-label">Kpis Actuales</div>
+                        <div class="grid grid-cols-2 gap-4 mt-4">
+                            <div>
+                                <p class="text-[9px] font-bold text-slate-400 uppercase">Ejecución</p>
+                                <p class="text-2xl font-black">${document.getElementById('percGlobal').innerText}</p>
                             </div>
-                            <div class="text-center p-4 bg-slate-50 rounded-2xl">
-                                <div class="report-label mb-2">Flujo</div>
-                                <div class="text-2xl font-black text-amber-600">${Math.round((fD/fT)*100)}%</div>
+                            <div>
+                                <p class="text-[9px] font-bold text-slate-400 uppercase">Estabilidad</p>
+                                <p class="text-2xl font-black">${document.getElementById('percEst').innerText}</p>
                             </div>
-                            <div class="text-center p-4 bg-slate-50 rounded-2xl">
-                                <div class="report-label mb-2">Sentido</div>
-                                <div class="text-2xl font-black text-emerald-600">${Math.round((sD/sT)*100)}%</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-6">
-                        <div class="p-6 bg-slate-50 rounded-3xl border border-slate-100">
-                            <h4 class="report-label mb-4">Lo que amas</h4>
-                            <p class="text-xs leading-relaxed text-slate-600 italic">"${window.localState.ikigaiNotes.love || 'Sin registro'}"</p>
-                        </div>
-                        <div class="p-6 bg-slate-50 rounded-3xl border border-slate-100">
-                            <h4 class="report-label mb-4">El mundo necesita</h4>
-                            <p class="text-xs leading-relaxed text-slate-600 italic">"${window.localState.ikigaiNotes.need || 'Sin registro'}"</p>
-                        </div>
-                        <div class="p-6 bg-slate-50 rounded-3xl border border-slate-100">
-                            <h4 class="report-label mb-4">Por lo que te pagan</h4>
-                            <p class="text-xs leading-relaxed text-slate-600 italic">"${window.localState.ikigaiNotes.paid || 'Sin registro'}"</p>
-                        </div>
-                        <div class="p-6 bg-slate-50 rounded-3xl border border-slate-100">
-                            <h4 class="report-label mb-4">En lo que eres bueno</h4>
-                            <p class="text-xs leading-relaxed text-slate-600 italic">"${window.localState.ikigaiNotes.good || 'Sin registro'}"</p>
-                        </div>
-                    </div>
-
-                    <div class="space-y-6">
-                        <h4 class="report-label flex items-center gap-2">
-                            <span class="w-8 h-px bg-slate-200"></span> 
-                            Auditoría de Actividad Diaria
-                        </h4>
-                        <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
-                            ${window.plan.map(d => {
-                                const done = window.localState.completedDays.includes(d.day);
-                                return `
-                                    <div class="p-4 border rounded-2xl ${done ? 'bg-sky-50 border-sky-100' : 'bg-slate-50 border-slate-100'}">
-                                        <div class="flex justify-between items-center mb-2">
-                                            <span class="text-[9px] font-black uppercase">Día ${d.day}</span>
-                                            <span class="text-[8px] font-bold ${done ? 'text-sky-600' : 'text-slate-400'}">${done ? 'COMPLETADO' : 'PENDIENTE'}</span>
-                                        </div>
-                                        <div class="space-y-1">
-                                            ${d.tasks.map(t => `<div class="text-[8px] flex items-center gap-1"><span class="w-1 h-1 rounded-full ${t.done ? 'bg-sky-500' : 'bg-slate-300'}"></span> ${t.title}</div>`).join('')}
-                                        </div>
-                                    </div>
-                                `;
-                            }).join('')}
-                        </div>
-                    </div>
-
-                    <div class="space-y-6">
-                        <h4 class="report-label flex items-center gap-2">
-                            <span class="w-8 h-px bg-slate-200"></span> 
-                            Bitácora de Reflexiones Profesionales
-                        </h4>
-                        <div class="space-y-4">
-                            ${window.localState.reflections.length ? window.localState.reflections.map(r => `
-                                <div class="p-6 border border-slate-100 rounded-3xl">
-                                    <div class="flex justify-between items-center mb-2">
-                                        <span class="text-[9px] font-black italic uppercase text-sky-600">Registro de Jornada • Día ${r.day}</span>
-                                        <span class="text-[8px] font-mono text-slate-400">${r.ts}</span>
-                                    </div>
-                                    <p class="text-xs text-slate-600 leading-relaxed">${r.text}</p>
-                                </div>
-                            `).join('') : '<p class="text-xs text-slate-400 italic">Sin registros de bitácora.</p>'}
                         </div>
                     </div>
                 </div>
-            `;
 
-            container.innerHTML = html;
-            document.getElementById('reportModal').classList.remove('hidden');
+                <div class="mb-12">
+                    <div class="report-label mb-6">Bitácora Kaizen (Últimas Notas)</div>
+                    <div class="space-y-4">
+                        ${window.localState.reflections.length > 0 ? 
+                            window.localState.reflections.slice(-5).map(r => `
+                                <div class="border-l-2 border-sky-200 pl-4 py-1">
+                                    <p class="text-[8px] font-black uppercase text-slate-400">Día ${r.day} | ${r.ts}</p>
+                                    <p class="text-sm text-slate-600 italic">"${r.text}"</p>
+                                </div>
+                            `).join('') : '<p class="text-slate-400 italic">No hay registros de bitácora.</p>'
+                        }
+                    </div>
+                </div>
+
+                <div>
+                    <div class="report-label mb-6">Matriz de Cumplimiento (14 Días)</div>
+                    <div class="grid grid-cols-7 gap-2">
+                        ${Array.from({length: 14}, (_, i) => {
+                            const d = i + 1;
+                            const done = window.localState.completedDays.includes(d);
+                            return `<div class="p-2 border text-center rounded-lg ${done ? 'bg-emerald-50 border-emerald-100' : 'bg-slate-50 border-slate-100 text-slate-300'}">
+                                <span class="text-[8px] block font-black">D${d}</span>
+                                <span class="text-[10px]">${done ? '✓' : '—'}</span>
+                            </div>`;
+                        }).join('')}
+                    </div>
+                </div>
+            `;
         };
 
-        document.addEventListener('DOMContentLoaded', () => {
-            const ctx = document.getElementById('radarChart');
-            radarChart = new Chart(ctx, {
-                type: 'radar',
-                data: {
-                    labels: ['ESTABILIDAD', 'FLUJO', 'SENTIDO'],
-                    datasets: [{
-                        data: [0, 0, 0],
-                        backgroundColor: 'rgba(56, 189, 248, 0.1)',
-                        borderColor: '#38bdf8',
-                        borderWidth: 3,
-                        pointBackgroundColor: '#38bdf8',
-                        pointBorderColor: '#fff',
-                        pointHoverBackgroundColor: '#fff',
-                        pointHoverBorderColor: '#38bdf8'
-                    }]
-                },
-                options: {
-                    scales: {
-                        r: {
-                            min: 0, max: 100, ticks: { display: false },
-                            grid: { color: 'rgba(255,255,255,0.05)' },
-                            angleLines: { color: 'rgba(255,255,255,0.05)' },
-                            pointLabels: { color: '#64748b', font: { size: 9, weight: '900' } }
-                        }
-                    },
-                    plugins: { legend: { display: false } }
-                }
-            });
-        });
+        window.onload = () => {
+            window.initRadar();
+            window.updateUI();
+        }
     </script>
 </body>
 </html>
