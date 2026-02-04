@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Proyecto 14 Días - Ejecución Real</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap');
+        
+        :root {
+            --bg: #0f172a;
+            --card: #1e293b;
+            --accent: #38bdf8;
+            --success: #10b981;
+            --warning: #fbbf24;
+            --danger: #ef4444;
+        }
+
+        body { 
+            background-color: var(--bg); 
+            color: #f8fafc; 
+            font-family: 'Inter', sans-serif;
+            scroll-behavior: smooth;
+        }
+
+        .glass-card { 
+            background: var(--card); 
+            border: 1px solid #334155;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        }
+
+        .day-box {
+            aspect-ratio: 1 / 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border-radius: 12px;
+            font-size: 0.65rem;
+            border: 1px solid #334155;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .day-box.completed {
+            background: rgba(16, 185, 129, 0.2);
+            border-color: var(--success);
+            color: var(--success);
+        }
+
+        .day-box.current {
+            border-color: var(--accent);
+            background: rgba(56, 189, 248, 0.1);
+            transform: scale(1.05);
+            box-shadow: 0 0 15px rgba(56, 189, 248, 0.2);
+        }
+
+        .task-item {
+            transition: all 0.2s ease;
+            cursor: pointer;
+            border-left: 4px solid transparent;
+        }
+        
+        .task-item:hover {
+            background: rgba(255,255,255,0.05);
+        }
+
+        .task-item.done {
+            opacity: 0.5;
+            text-decoration: line-through;
+            border-left-color: var(--success);
+            background: rgba(16, 185, 129, 0.05);
+        }
+
+        .progress-bar-fill {
+            transition: height 1s cubic-bezier(0.4, 0, 0.2, 1), width 1s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        canvas {
+            max-width: 100% !important;
+            height: auto !important;
+        }
+        
+        /* Checkbox custom */
+        .custom-checkbox {
+            width: 20px;
+            height: 20px;
+            border: 2px solid #475569;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+        .task-item.done .custom-checkbox {
+            background: var(--success);
+            border-color: var(--success);
+        }
+        .task-item.done .custom-checkbox::after {
+            content: '✓';
+            color: white;
+            font-size: 12px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body class="min-h-screen pb-20">
+    <div class="max-w-3xl mx-auto p-4 md:p-8">
+        
+        <!-- Header Principal -->
+        <header class="flex justify-between items-center mb-8 pt-4">
+            <div class="text-left">
+                <h1 class="text-3xl font-extrabold tracking-tighter italic text-white uppercase">
+                    PROYECTO <span class="text-sky-400">14 DÍAS</span>
+                </h1>
+                <p class="text-slate-400 text-[10px] uppercase tracking-[0.2em] font-bold">Plan de Baja Ansiedad</p>
+            </div>
+            <div class="text-right">
+                <span id="dateDisplay" class="text-xs font-mono text-slate-500 uppercase tracking-widest italic">Cargando...</span>
+            </div>
+        </header>
+
+        <!-- Gráficos de Análisis y Progreso Temático -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+            <!-- Radar de Balance -->
+            <div class="glass-card rounded-3xl p-6 flex flex-col items-center">
+                <h3 class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-4 self-start italic">Balance de Vida</h3>
+                <div class="w-full h-48 flex items-center justify-center mb-6">
+                    <canvas id="radarChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Tanques de Progreso por Temática -->
+            <div class="glass-card rounded-3xl p-6 flex flex-col">
+                <h3 class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-4 italic">Llenado de Bloques</h3>
+                <div class="flex-1 flex justify-around items-end gap-4 h-32 pb-2">
+                    <!-- Barra Estabilidad -->
+                    <div class="flex flex-col items-center h-full justify-end w-1/3 group">
+                        <span id="labelEstabilidad" class="text-[9px] font-bold text-sky-400 mb-1 opacity-0 group-hover:opacity-100 transition-opacity">0/5</span>
+                        <div class="w-full bg-slate-800 rounded-t-xl overflow-hidden relative h-full border border-slate-700">
+                            <div id="fillEstabilidad" class="absolute bottom-0 w-full bg-sky-500/80 transition-all duration-1000" style="height: 0%"></div>
+                        </div>
+                        <span class="text-[9px] font-black text-slate-500 mt-2 uppercase tracking-tighter">Estabilidad</span>
+                    </div>
+                    <!-- Barra Flujo -->
+                    <div class="flex flex-col items-center h-full justify-end w-1/3 group">
+                        <span id="labelFlujo" class="text-[9px] font-bold text-amber-400 mb-1 opacity-0 group-hover:opacity-100 transition-opacity">0/4</span>
+                        <div class="w-full bg-slate-800 rounded-t-xl overflow-hidden relative h-full border border-slate-700">
+                            <div id="fillFlujo" class="absolute bottom-0 w-full bg-amber-500/80 transition-all duration-1000" style="height: 0%"></div>
+                        </div>
+                        <span class="text-[9px] font-black text-slate-500 mt-2 uppercase tracking-tighter">Flujo</span>
+                    </div>
+                    <!-- Barra Sentido -->
+                    <div class="flex flex-col items-center h-full justify-end w-1/3 group">
+                        <span id="labelSentido" class="text-[9px] font-bold text-emerald-400 mb-1 opacity-0 group-hover:opacity-100 transition-opacity">0/5</span>
+                        <div class="w-full bg-slate-800 rounded-t-xl overflow-hidden relative h-full border border-slate-700">
+                            <div id="fillSentido" class="absolute bottom-0 w-full bg-emerald-500/80 transition-all duration-1000" style="height: 0%"></div>
+                        </div>
+                        <span class="text-[9px] font-black text-slate-500 mt-2 uppercase tracking-tighter">Sentido</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Mapa de 14 Días -->
+        <section class="glass-card rounded-3xl p-6 mb-8">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-[10px] font-bold uppercase tracking-widest text-slate-500 italic">Cronograma de Ejecución</h3>
+                <div class="flex gap-2">
+                    <div class="flex items-center gap-1"><div class="w-2 h-2 bg-sky-500/50 rounded-sm"></div><span class="text-[8px] text-slate-500 font-bold uppercase">Estabilidad</span></div>
+                    <div class="flex items-center gap-1"><div class="w-2 h-2 bg-amber-500/50 rounded-sm"></div><span class="text-[8px] text-slate-500 font-bold uppercase">Flujo</span></div>
+                    <div class="flex items-center gap-1"><div class="w-2 h-2 bg-emerald-500/50 rounded-sm"></div><span class="text-[8px] text-slate-500 font-bold uppercase">Sentido</span></div>
+                </div>
+            </div>
+            <div id="calendarGrid" class="grid grid-cols-7 gap-2"></div>
+        </section>
+
+        <!-- Panel de Tareas Diario (MULTITASK) -->
+        <section class="glass-card rounded-3xl p-6 md:p-8 border-l-8 border-sky-500 shadow-2xl relative overflow-hidden mb-8 bg-gradient-to-br from-slate-800/50 to-transparent">
+            <div class="flex justify-between items-start mb-6">
+                <div>
+                    <span id="blockBadge" class="bg-sky-500/20 text-sky-400 text-[10px] font-black px-2 py-1 rounded uppercase tracking-widest">Bloque 1: Estabilidad</span>
+                    <h2 class="text-2xl font-black text-white italic mt-1" id="dayTitle">Día 1</h2>
+                </div>
+                <div class="flex flex-col items-end">
+                    <span class="text-[10px] text-slate-500 font-bold uppercase italic">Progreso Hoy</span>
+                    <span id="dailyProgressText" class="text-xl font-black text-white italic leading-none">0/3</span>
+                </div>
+            </div>
+            
+            <!-- Lista de Tareas -->
+            <div class="space-y-3 mb-8" id="taskList">
+                <!-- Se llena dinámicamente -->
+            </div>
+
+            <!-- Barra de Progreso Diario -->
+            <div class="w-full bg-slate-900 h-2 rounded-full overflow-hidden mb-6">
+                <div id="dailyProgressBar" class="h-full bg-sky-500 transition-all duration-500" style="width: 0%"></div>
+            </div>
+            
+            <button onclick="cerrarDia()" id="closeDayBtn" class="w-full bg-slate-700 text-slate-400 font-black py-5 rounded-2xl transition-all uppercase tracking-widest italic text-sm cursor-not-allowed opacity-50" disabled>
+                Completa todas las tareas
+            </button>
+        </section>
+
+        <!-- Bitácora de Cierre -->
+        <section class="glass-card rounded-3xl p-6 mb-8">
+            <h3 class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-4 italic">3. Cierre: Bitácora Diaria</h3>
+            <textarea id="reflexionInput" class="w-full bg-slate-900/50 border border-slate-700 rounded-2xl p-4 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/50 placeholder:text-slate-600 mb-4" rows="2" placeholder="Qué se hizo hoy y qué sigue mañana..."></textarea>
+            <div id="historyLog" class="space-y-2 max-h-40 overflow-y-auto pr-2"></div>
+        </section>
+
+    </div>
+
+    <script>
+        // BASE DE DATOS ESTRUCTURADA POR DÍA Y MÚLTIPLES TAREAS
+        const plan = [
+            // BLOQUE 1 - ESTABILIDAD
+            {
+                day: 1,
+                theme: "Estabilidad",
+                radar: [30, 10, 20],
+                tasks: [
+                    { type: "Estructural", title: "Solicitar registro civil Sebastián", desc: "Legal: Copia auténtica para sucesión.", done: false },
+                    { type: "Operativa", title: "Organizar carpeta digital", desc: "Orden: Crear estructura de archivos.", done: false },
+                    { type: "Creativa", title: "Fotografía: Luz entrando", desc: "Ikigai: Ventanas y sombras suaves.", done: false }
+                ]
+            },
+            {
+                day: 2,
+                theme: "Estabilidad",
+                radar: [40, 15, 25],
+                tasks: [
+                    { type: "Estructural", title: "Solicitar registro civil Ana María", desc: "Legal: Copia auténtica para sucesión.", done: false },
+                    { type: "Operativa", title: "Comprar lijas y estuco", desc: "Cota: Insumos básicos.", done: false },
+                    { type: "Creativa", title: "Fotografía: Texturas tranquilas", desc: "Ikigai: Detalles materiales.", done: false }
+                ]
+            },
+            {
+                day: 3,
+                theme: "Estabilidad",
+                radar: [50, 20, 30],
+                tasks: [
+                    { type: "Estructural", title: "Digitalizar documentos existentes", desc: "Legal: Escanear lo que ya tienes.", done: false },
+                    { type: "Operativa", title: "Enviar 1 correo de seguimiento", desc: "Bella Piel o Abogado.", done: false },
+                    { type: "Creativa", title: "Dibujo libre 15 min", desc: "Ikigai: Sin objetivo.", done: false }
+                ]
+            },
+            {
+                day: 4,
+                theme: "Estabilidad",
+                radar: [60, 25, 35],
+                tasks: [
+                    { type: "Estructural", title: "Resanar una sola zona", desc: "Cota: Acción física concreta.", done: false },
+                    { type: "Operativa", title: "Comprar silicona", desc: "Cota: Materiales faltantes.", done: false },
+                    { type: "Creativa", title: "Fotografía: 'Antes'", desc: "Ikigai: Documentar estado actual.", done: false }
+                ]
+            },
+            {
+                day: 5,
+                theme: "Estabilidad",
+                radar: [70, 30, 40],
+                tasks: [
+                    { type: "Estructural", title: "Coordinar instalación vidrio", desc: "Cota: Solo gestión, no ejecución.", done: false },
+                    { type: "Operativa", title: "Ordenar materiales", desc: "Orden: Limpiar zona de trabajo.", done: false },
+                    { type: "Creativa", title: "Dibujo de objetos cotidianos", desc: "Ikigai: Observación.", done: false }
+                ]
+            },
+            // BLOQUE 2 - FLUJO
+            {
+                day: 6,
+                theme: "Flujo",
+                radar: [50, 40, 30],
+                tasks: [
+                    { type: "Estructural", title: "Sellar humedades", desc: "Cota: Solo una habitación.", done: false },
+                    { type: "Operativa", title: "Llamada corta de confirmación", desc: "Gestión rápida.", done: false },
+                    { type: "Creativa", title: "Fotografía: 'Manos trabajando'", desc: "Ikigai: Acción.", done: false }
+                ]
+            },
+            {
+                day: 7,
+                theme: "Flujo",
+                radar: [50, 50, 35],
+                tasks: [
+                    { type: "Estructural", title: "Pintar una pared", desc: "Cota: Avance visible.", done: false },
+                    { type: "Operativa", title: "Limpieza ligera", desc: "Orden: Post-pintura.", done: false },
+                    { type: "Creativa", title: "Fotografía: 'Proceso'", desc: "Ikigai: Documentar.", done: false }
+                ]
+            },
+            {
+                day: 8,
+                theme: "Flujo",
+                radar: [50, 60, 40],
+                tasks: [
+                    { type: "Estructural", title: "Pintar otra pared", desc: "Cota: Mantener ritmo.", done: false },
+                    { type: "Operativa", title: "Revisar respuestas recibidas", desc: "Legal/Bella Piel.", done: false },
+                    { type: "Creativa", title: "Dibujo libre", desc: "Ikigai: Desconexión.", done: false }
+                ]
+            },
+            {
+                day: 9,
+                theme: "Flujo",
+                radar: [50, 70, 50],
+                tasks: [
+                    { type: "Estructural", title: "Limpieza general parcial", desc: "Cota: Preparar para mostrar.", done: false },
+                    { type: "Operativa", title: "Tomar fotos de avance", desc: "Cota: Registro.", done: false },
+                    { type: "Creativa", title: "Fotografía: 'Después parcial'", desc: "Ikigai: Logro.", done: false }
+                ]
+            },
+            // BLOQUE 3 - SENTIDO
+            {
+                day: 10,
+                theme: "Sentido",
+                radar: [40, 60, 60],
+                tasks: [
+                    { type: "Estructural", title: "Preparar texto arriendo", desc: "Ingreso: Borrador publicación.", done: false },
+                    { type: "Operativa", title: "Revisar precios mercado", desc: "Ingreso: Comparativa.", done: false },
+                    { type: "Creativa", title: "Fotografía: 'Espacios vacíos'", desc: "Ikigai: Potencial.", done: false }
+                ]
+            },
+            {
+                day: 11,
+                theme: "Sentido",
+                radar: [40, 60, 70],
+                tasks: [
+                    { type: "Estructural", title: "Publicar arriendo", desc: "Ingreso: Acción pública.", done: false },
+                    { type: "Operativa", title: "Responder mensajes (30 min)", desc: "Ingreso: Gestión.", done: false },
+                    { type: "Creativa", title: "Dibujo", desc: "Ikigai: Expresión.", done: false }
+                ]
+            },
+            {
+                day: 12,
+                theme: "Sentido",
+                radar: [40, 60, 80],
+                tasks: [
+                    { type: "Estructural", title: "Contactar 1 abogado sucesión", desc: "Legal: Avance.", done: false },
+                    { type: "Operativa", title: "Anotar respuestas", desc: "Legal: Bitácora.", done: false },
+                    { type: "Creativa", title: "Fotografía: 'Caminos'", desc: "Ikigai: Metáfora.", done: false }
+                ]
+            },
+            {
+                day: 13,
+                theme: "Sentido",
+                radar: [40, 60, 90],
+                tasks: [
+                    { type: "Estructural", title: "Contactar 2do abogado", desc: "Legal: Opción B.", done: false },
+                    { type: "Operativa", title: "Comparar opciones", desc: "Legal: Análisis sin decisión final.", done: false },
+                    { type: "Creativa", title: "Dibujo", desc: "Ikigai: Calma.", done: false }
+                ]
+            },
+            {
+                day: 14,
+                theme: "Sentido",
+                radar: [50, 70, 100],
+                tasks: [
+                    { type: "Estructural", title: "Revisión general", desc: "Cierre: Qué quedó listo.", done: false },
+                    { type: "Operativa", title: "Ajustar lista tareas", desc: "Orden: Plan siguiente.", done: false },
+                    { type: "Creativa", title: "Fotografía: 'Cierre'", desc: "Ikigai: Fin de ciclo.", done: false }
+                ]
+            }
+        ];
+
+        let state = { 
+            day: 1, 
+            completedDays: [], 
+            radar: null
+        };
+
+        function initRadar() {
+            const ctx = document.getElementById('radarChart');
+            state.radar = new Chart(ctx, {
+                type: 'radar',
+                data: {
+                    labels: ['ESTABILIDAD', 'FLUJO', 'SENTIDO'],
+                    datasets: [{
+                        label: 'Nivel Actual',
+                        data: [10, 10, 10],
+                        fill: true,
+                        backgroundColor: 'rgba(56, 189, 248, 0.2)',
+                        borderColor: 'rgb(56, 189, 248)',
+                        pointBackgroundColor: 'rgb(56, 189, 248)',
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    scales: {
+                        r: {
+                            min: 0, max: 100,
+                            ticks: { display: false },
+                            grid: { color: '#334155' },
+                            angleLines: { color: '#334155' },
+                            pointLabels: { color: '#94a3b8', font: { size: 9, weight: 'bold' } }
+                        }
+                    },
+                    plugins: { legend: { display: false } }
+                }
+            });
+        }
+
+        function renderTasks() {
+            const currentPlan = plan[state.day - 1];
+            const taskList = document.getElementById('taskList');
+            taskList.innerHTML = '';
+            
+            // Actualizar textos de cabecera
+            document.getElementById('dayTitle').innerText = `Día ${currentPlan.day}`;
+            let badgeClass = "bg-sky-500/20 text-sky-400 border-sky-500/30";
+            if (currentPlan.theme === "Flujo") badgeClass = "bg-amber-500/20 text-amber-400 border-amber-500/30";
+            if (currentPlan.theme === "Sentido") badgeClass = "bg-emerald-500/20 text-emerald-400 border-emerald-500/30";
+            
+            document.getElementById('blockBadge').className = `border ${badgeClass} text-[10px] font-black px-2 py-1 rounded uppercase tracking-widest`;
+            document.getElementById('blockBadge').innerText = `Bloque: ${currentPlan.theme}`;
+
+            // Renderizar lista
+            let completedCount = 0;
+            currentPlan.tasks.forEach((task, index) => {
+                if (task.done) completedCount++;
+                
+                const div = document.createElement('div');
+                div.className = `task-item p-4 rounded-xl border border-slate-700 bg-slate-800/50 flex items-center justify-between ${task.done ? 'done' : ''}`;
+                div.onclick = () => toggleTask(index);
+                
+                let iconColor = "text-slate-400";
+                let typeBadge = "";
+                
+                if (task.type === "Estructural") { iconColor = "text-sky-400"; typeBadge = "bg-sky-500/10 text-sky-400 border-sky-500/20"; }
+                if (task.type === "Operativa") { iconColor = "text-amber-400"; typeBadge = "bg-amber-500/10 text-amber-400 border-amber-500/20"; }
+                if (task.type === "Creativa") { iconColor = "text-emerald-400"; typeBadge = "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"; }
+
+                div.innerHTML = `
+                    <div class="flex items-center gap-4">
+                        <div class="custom-checkbox ${task.done ? 'bg-emerald-500 border-emerald-500' : ''}"></div>
+                        <div>
+                            <div class="flex items-center gap-2 mb-1">
+                                <span class="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded border ${typeBadge}">${task.type}</span>
+                            </div>
+                            <h4 class="text-sm font-bold text-white leading-tight">${task.title}</h4>
+                            <p class="text-[10px] text-slate-400 italic mt-0.5">${task.desc}</p>
+                        </div>
+                    </div>
+                `;
+                taskList.appendChild(div);
+            });
+
+            // Actualizar progreso diario
+            document.getElementById('dailyProgressText').innerText = `${completedCount}/3`;
+            const percent = (completedCount / 3) * 100;
+            document.getElementById('dailyProgressBar').style.width = `${percent}%`;
+
+            // Botón de cierre
+            const btn = document.getElementById('closeDayBtn');
+            if (completedCount === 3) {
+                btn.disabled = false;
+                btn.classList.remove('bg-slate-700', 'text-slate-400', 'cursor-not-allowed', 'opacity-50');
+                btn.classList.add('bg-emerald-500', 'text-white', 'hover:bg-emerald-400', 'shadow-lg');
+                btn.innerText = "Cerrar Día y Avanzar";
+            } else {
+                btn.disabled = true;
+                btn.classList.add('bg-slate-700', 'text-slate-400', 'cursor-not-allowed', 'opacity-50');
+                btn.classList.remove('bg-emerald-500', 'text-white', 'hover:bg-emerald-400', 'shadow-lg');
+                btn.innerText = `Completa ${3 - completedCount} tareas más`;
+            }
+        }
+
+        function toggleTask(index) {
+            const currentPlan = plan[state.day - 1];
+            currentPlan.tasks[index].done = !currentPlan.tasks[index].done;
+            renderTasks();
+        }
+
+        function cerrarDia() {
+            if (!state.completedDays.includes(state.day)) {
+                state.completedDays.push(state.day);
+            }
+            
+            // Actualizar Radar con valores del día completado
+            if(state.radar) {
+                state.radar.data.datasets[0].data = plan[state.day - 1].radar;
+                state.radar.update();
+            }
+
+            if(state.day < 14) {
+                state.day++;
+            }
+            updateUI();
+        }
+
+        function updateUI() {
+            renderTasks();
+            
+            // Calendario
+            const grid = document.getElementById('calendarGrid');
+            grid.innerHTML = '';
+            for (let i = 1; i <= 14; i++) {
+                const div = document.createElement('div');
+                let colorClass = "border-slate-700";
+                if(i <= 5) colorClass = "border-sky-500/30 text-sky-500";
+                else if(i <= 9) colorClass = "border-amber-500/30 text-amber-500";
+                else colorClass = "border-emerald-500/30 text-emerald-500";
+
+                div.className = `day-box ${colorClass} ${i === state.day ? 'current' : ''} ${state.completedDays.includes(i) ? 'completed' : ''}`;
+                div.innerHTML = `<span class="font-black italic">${i}</span>`;
+                // Permitir viajar al pasado
+                if (i <= state.day || state.completedDays.includes(i)) {
+                     div.onclick = () => { state.day = i; updateUI(); };
+                }
+                grid.appendChild(div);
+            }
+
+            // Tanques de Progreso
+            const estCount = state.completedDays.filter(d => d <= 5).length;
+            const flowCount = state.completedDays.filter(d => d > 5 && d <= 9).length;
+            const senseCount = state.completedDays.filter(d => d > 9).length;
+
+            document.getElementById('fillEstabilidad').style.height = `${(estCount / 5) * 100}%`;
+            document.getElementById('labelEstabilidad').innerText = `${estCount}/5`;
+            
+            document.getElementById('fillFlujo').style.height = `${(flowCount / 4) * 100}%`;
+            document.getElementById('labelFlujo').innerText = `${flowCount}/4`;
+            
+            document.getElementById('fillSentido').style.height = `${(senseCount / 5) * 100}%`;
+            document.getElementById('labelSentido').innerText = `${senseCount}/5`;
+        }
+
+        function guardarReflexion() {
+            const input = document.getElementById('reflexionInput');
+            if(!input.value.trim()) return;
+            const entry = document.createElement('div');
+            entry.className = "p-3 bg-slate-800/50 rounded-xl border border-slate-700 text-[10px] italic mb-2";
+            entry.innerHTML = `<span class="text-sky-400 font-bold uppercase">Día ${state.day}:</span> <span class="text-slate-400">"${input.value}"</span>`;
+            document.getElementById('historyLog').prepend(entry);
+            input.value = "";
+        }
+
+        window.onload = () => {
+            document.getElementById('dateDisplay').innerText = new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase();
+            initRadar();
+            updateUI();
+        };
+    </script>
+</body>
+</html>
