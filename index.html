@@ -16,32 +16,56 @@
         let db = null;
         let auth = null;
         let currentUser = null;
-        let appId = 'proyecto-14-dias';
-        let isAppReady = false;
-
+        let appId = typeof __app_id !== 'undefined' ? __app_id : 'proyecto-14-dias';
+        
+        // ESTADO INICIAL (Fallback)
         let localState = {
             currentDay: 1,
             completedDays: [],
             reflections: [],
-            pendingTasks: [] 
+            pendingTasks: [],
+            taskStates: [] // Guardaremos aquí la matriz de booleanos de window.plan
         };
 
         const statusText = document.getElementById('syncStatus');
         const loadingOverlay = document.getElementById('loadingOverlay');
 
-        // FUNCIÓN DE INICIALIZACIÓN
+        // 1. CARGA LOCAL INMEDIATA (Estrategia Local-First)
+        const loadFromLocalStorage = () => {
+            const saved = localStorage.getItem(`ikigai_storage_${appId}`);
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                localState = { ...localState, ...parsed };
+                // Aplicar estados de tareas al objeto window.plan si existen
+                if (localState.taskStates) {
+                    localState.taskStates.forEach((dayTasks, dIdx) => {
+                        if (window.plan[dIdx]) {
+                            dayTasks.forEach((done, tIdx) => {
+                                if (window.plan[dIdx].tasks[tIdx]) window.plan[dIdx].tasks[tIdx].done = done;
+                            });
+                        }
+                    });
+                }
+                console.log("Datos recuperados de LocalStorage");
+            }
+        };
+
+        // 2. INICIALIZACIÓN FIREBASE (Sincronización)
         const initFirebase = async () => {
+            loadFromLocalStorage(); // Cargar local primero
+            window.updateUI();      // Mostrar lo que tengamos de inmediato
+            window.renderReflections();
+
             try {
                 if (typeof __firebase_config !== 'undefined') {
                     const firebaseConfig = JSON.parse(__firebase_config);
                     const app = initializeApp(firebaseConfig);
                     auth = getAuth(app);
                     db = getFirestore(app);
-                    appId = typeof __app_id !== 'undefined' ? __app_id : 'proyecto-14-dias';
                     
                     const initAuth = async () => {
                         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                            await signInWithCustomToken(auth, __initial_auth_token);
+                            await signInWithCustomToken(auth, __initial_auth_token).catch(() => signInAnonymously(auth));
                         } else {
                             await signInAnonymously(auth);
                         }
@@ -52,74 +76,82 @@
                         if (user) {
                             currentUser = user;
                             document.getElementById('userIdDisplay').innerText = `ID: ${user.uid}`;
-                            await loadData();
-                            showApp();
+                            await syncWithFirebase();
+                            hideLoading();
                         }
                     });
                 } else {
-                    statusText.innerText = "Modo Local";
-                    showApp();
+                    statusText.innerText = "Modo Offline";
+                    hideLoading();
                 }
             } catch (err) { 
-                console.error("Error init:", err);
-                statusText.innerText = "Error de Conexión";
-                showApp();
+                console.error("Firebase init error:", err);
+                statusText.innerText = "Error de Red - Modo Local";
+                hideLoading();
             }
         };
 
-        async function loadData() {
+        const syncWithFirebase = async () => {
             if (!currentUser || !db) return;
+            statusText.innerText = "Sincronizando...";
             const docRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'progress', 'mainState');
+            
             try {
                 const docSnap = await getDoc(docRef);
                 if (docSnap.exists()) {
-                    const data = docSnap.data();
-                    localState.currentDay = data.currentDay || 1;
-                    localState.completedDays = data.completedDays || [];
-                    localState.reflections = data.reflections || [];
-                    localState.pendingTasks = data.pendingTasks || [];
+                    const remoteData = docSnap.data();
+                    // Aquí podrías añadir lógica de resolución de conflictos (ej. por timestamp)
+                    // Por ahora, el remoto manda si existe.
+                    localState = { ...localState, ...remoteData };
                     
-                    if (data.taskStates) {
-                        data.taskStates.forEach((dayTasks, dIdx) => {
+                    // Actualizar window.plan con datos remotos
+                    if (localState.taskStates) {
+                        localState.taskStates.forEach((dayTasks, dIdx) => {
                             if (window.plan[dIdx]) {
                                 dayTasks.forEach((done, tIdx) => {
-                                    if (window.plan[dIdx].tasks[tIdx]) 
-                                        window.plan[dIdx].tasks[tIdx].done = done;
+                                    if (window.plan[dIdx].tasks[tIdx]) window.plan[dIdx].tasks[tIdx].done = done;
                                 });
                             }
                         });
                     }
+                    
+                    // Guardar en local lo que bajó de la nube
+                    localStorage.setItem(`ikigai_storage_${appId}`, JSON.stringify(localState));
+                    
+                    window.updateUI();
+                    window.renderReflections();
+                    statusText.innerText = "Nube Actualizada";
+                } else {
+                    statusText.innerText = "Primer uso - Nube vacía";
                 }
-                statusText.innerText = "Datos Sincronizados";
             } catch (error) { 
-                console.error("Load error:", error);
+                statusText.innerText = "Error Sinc. Remota";
             }
-        }
+        };
 
-        function showApp() {
-            isAppReady = true;
+        function hideLoading() {
             loadingOverlay.style.opacity = '0';
-            setTimeout(() => {
-                loadingOverlay.style.display = 'none';
-                window.updateUI();
-                window.renderReflections();
-            }, 500);
+            setTimeout(() => { loadingOverlay.style.display = 'none'; }, 500);
         }
 
         window.saveData = async () => {
-            if (!currentUser || !db || !isAppReady) return;
-            const taskStates = window.plan.map(p => p.tasks.map(t => t.done));
-            try {
-                await setDoc(doc(db, 'artifacts', appId, 'users', currentUser.uid, 'progress', 'mainState'), {
-                    currentDay: localState.currentDay,
-                    completedDays: localState.completedDays,
-                    reflections: localState.reflections,
-                    pendingTasks: localState.pendingTasks,
-                    taskStates: taskStates,
-                    lastUpdated: new Date().toISOString()
-                });
-            } catch (error) { 
-                statusText.innerText = "Error al Guardar"; 
+            // Preparar matriz de tareas para guardar
+            localState.taskStates = window.plan.map(p => p.tasks.map(t => t.done));
+            
+            // 1. Guardar en LocalStorage (Instantáneo)
+            localStorage.setItem(`ikigai_storage_${appId}`, JSON.stringify(localState));
+
+            // 2. Guardar en Firebase (Si hay conexión)
+            if (currentUser && db) {
+                try {
+                    await setDoc(doc(db, 'artifacts', appId, 'users', currentUser.uid, 'progress', 'mainState'), {
+                        ...localState,
+                        lastUpdated: new Date().toISOString()
+                    });
+                    statusText.innerText = "Guardado en Nube";
+                } catch (error) { 
+                    statusText.innerText = "Error al subir datos"; 
+                }
             }
         };
 
@@ -159,7 +191,7 @@
 
     <div id="loadingOverlay">
         <div class="w-16 h-16 border-4 border-sky-500/20 border-t-sky-500 rounded-full animate-spin mb-4"></div>
-        <p class="text-[10px] font-black uppercase tracking-[0.3em] text-sky-500 animate-pulse">Sincronizando Estación...</p>
+        <p class="text-[10px] font-black uppercase tracking-[0.3em] text-sky-500 animate-pulse">Iniciando Sistemas...</p>
     </div>
 
     <div class="max-w-3xl mx-auto p-4 md:p-8">
@@ -168,7 +200,7 @@
             <div>
                 <h1 class="text-3xl font-extrabold italic text-white uppercase leading-none tracking-tighter">PROYECTO <span class="text-sky-400">14 DÍAS</span></h1>
                 <div class="flex items-center gap-2 mt-2">
-                    <span id="syncStatus" class="text-[9px] font-bold uppercase tracking-widest text-slate-500 italic">Conectando...</span>
+                    <span id="syncStatus" class="text-[9px] font-bold uppercase tracking-widest text-slate-500 italic">Cargando...</span>
                 </div>
             </div>
             <div class="text-right">
@@ -265,7 +297,7 @@
     </div>
 
     <script>
-        // PLAN DE 14 DÍAS
+        // PLAN DE 14 DÍAS (Inalterado)
         window.plan = [
             { day: 1, tasks: [{ concept: "Estabilidad", title: "Carpeta Digital Master", desc: "Estructura Drive.", done: false }, { concept: "Flujo", title: "Registro Sebastián", desc: "Obtener copia digital.", done: false }, { concept: "Sentido", title: "Foto: Luz Natural", desc: "Capturar potencial.", done: false }]},
             { day: 2, tasks: [{ concept: "Estabilidad", title: "Registro Ana", desc: "Escanear y centralizar.", done: false }, { concept: "Flujo", title: "Preparación Cota", desc: "Identificar grietas.", done: false }, { concept: "Sentido", title: "Foto: Textura", desc: "Capturar material bruto.", done: false }]},
@@ -311,6 +343,8 @@
         window.updateUI = () => {
             const dayIdx = (window.localState.currentDay || 1) - 1;
             const currentDayPlan = window.plan[dayIdx];
+            if(!currentDayPlan) return;
+
             document.getElementById('dayTitle').innerText = `Día ${currentDayPlan.day}`;
             
             let activeTasks = [...currentDayPlan.tasks];
@@ -420,6 +454,7 @@
 
         window.renderReflections = () => {
             const container = document.getElementById('historyLog');
+            if(!container) return;
             container.innerHTML = '';
             window.localState.reflections.slice().reverse().forEach(ref => {
                 const entry = document.createElement('div');
@@ -429,18 +464,18 @@
             });
         };
 
-        // EXPORTACIÓN Y REPORTES AVANZADOS
         window.exportarJSON = () => {
             const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(window.localState, null, 2));
             const downloadAnchorNode = document.createElement('a');
             downloadAnchorNode.setAttribute("href", dataStr);
-            downloadAnchorNode.setAttribute("download", `progreso_completo_${new Date().toISOString().split('T')[0]}.json`);
+            downloadAnchorNode.setAttribute("download", `ikigai_backup_${new Date().toISOString().split('T')[0]}.json`);
             document.body.appendChild(downloadAnchorNode);
             downloadAnchorNode.click();
             downloadAnchorNode.remove();
         };
 
         window.exportarReporteHTML = () => {
+            // Reutilizamos la lógica de exportación previa
             const metrics = {
                 est: document.getElementById('fillEstabilidad').style.height,
                 flu: document.getElementById('fillFlujo').style.height,
@@ -448,97 +483,18 @@
                 total: document.getElementById('radarValue').innerText
             };
             
-            const reflectionsHTML = window.localState.reflections.length > 0 
-                ? window.localState.reflections.map(r => `
-                    <div style="border-left: 3px solid #38bdf8; padding-left: 15px; margin-bottom: 20px;">
-                        <span style="font-size: 11px; font-weight: bold; color: #64748b; text-transform: uppercase;">Día ${r.day}</span>
-                        <p style="margin: 5px 0 0 0; font-size: 14px; color: #1e293b; font-style: italic;">"${r.text}"</p>
-                    </div>`).join('')
-                : "<p>No hay reflexiones registradas.</p>";
+            const reflectionsHTML = window.localState.reflections.map(r => `
+                <div style="border-left: 3px solid #38bdf8; padding-left: 15px; margin-bottom: 20px;">
+                    <span style="font-size: 11px; font-weight: bold; color: #64748b; text-transform: uppercase;">Día ${r.day}</span>
+                    <p style="margin: 5px 0 0 0; font-size: 14px; color: #1e293b; font-style: italic;">"${r.text}"</p>
+                </div>`).join('');
 
-            // Generar tabla de tareas completadas
-            let tasksTableHTML = "";
-            window.plan.forEach(d => {
-                const doneCount = d.tasks.filter(t => t.done).length;
-                if(doneCount > 0) {
-                    tasksTableHTML += `
-                        <div style="margin-bottom: 15px;">
-                            <h3 style="font-size: 12px; margin-bottom: 5px; color: #38bdf8;">Día ${d.day} (${doneCount}/${d.tasks.length} tareas)</h3>
-                            <ul style="margin: 0; font-size: 12px; color: #475569;">
-                                ${d.tasks.map(t => `<li style="${t.done ? '' : 'text-decoration: line-through; opacity: 0.5'}">${t.title} - ${t.concept}</li>`).join('')}
-                            </ul>
-                        </div>
-                    `;
-                }
-            });
-
-            const htmlReport = `
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <meta charset="UTF-8">
-                    <title>Reporte de Progreso - Estación Ikigai</title>
-                    <style>
-                        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 50px; color: #0f172a; line-height: 1.5; background: #fff; }
-                        .container { max-width: 800px; margin: 0 auto; }
-                        .header { border-bottom: 4px solid #38bdf8; padding-bottom: 25px; margin-bottom: 40px; }
-                        .header h1 { margin: 0; font-size: 28px; font-style: italic; font-weight: 900; letter-spacing: -1px; }
-                        .meta { font-size: 11px; font-family: monospace; color: #64748b; margin-top: 10px; }
-                        .metrics { display: flex; gap: 15px; margin-bottom: 40px; }
-                        .metric-card { flex: 1; padding: 20px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; text-align: center; }
-                        .metric-card h4 { margin: 0 0 10px 0; font-size: 10px; text-transform: uppercase; color: #64748b; letter-spacing: 1px; }
-                        .metric-value { font-size: 32px; font-weight: 800; color: #38bdf8; }
-                        .section-title { font-size: 12px; font-weight: bold; text-transform: uppercase; color: #94a3b8; letter-spacing: 2px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; margin-bottom: 20px; }
-                        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; }
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <div class="header">
-                            <h1>PROYECTO 14 DÍAS: INFORME DE PROGRESO</h1>
-                            <div class="meta">
-                                USUARIO: ${document.getElementById('userIdDisplay').innerText} | 
-                                GENERADO: ${new Date().toLocaleString('es-ES')}
-                            </div>
-                        </div>
-
-                        <div class="section-title">Resumen de Arquitectura</div>
-                        <div class="metrics">
-                            <div class="metric-card"><h4>Estabilidad</h4><div class="metric-value">${metrics.est}</div></div>
-                            <div class="metric-card"><h4>Flujo</h4><div class="metric-value">${metrics.flu}</div></div>
-                            <div class="metric-card"><h4>Sentido</h4><div class="metric-value">${metrics.sen}</div></div>
-                            <div class="metric-card" style="background: #0f172a;">
-                                <h4 style="color: #38bdf8;">Balance Total</h4>
-                                <div class="metric-value" style="color: #fff;">${metrics.total}</div>
-                            </div>
-                        </div>
-
-                        <div class="grid">
-                            <div>
-                                <div class="section-title">Bitácora de Reflexiones</div>
-                                ${reflectionsHTML}
-                            </div>
-                            <div>
-                                <div class="section-title">Tareas Ejecutadas</div>
-                                ${tasksTableHTML || '<p style="font-size:12px; color:#94a3b8;">No se han completado tareas aún.</p>'}
-                            </div>
-                        </div>
-
-                        <div style="margin-top: 50px; padding-top: 20px; border-top: 1px solid #eee; font-size: 10px; color: #94a3b8; text-align: center;">
-                            Fin del reporte. Estación Ikigai-Kaizen v2.5
-                        </div>
-                    </div>
-                </body>
-                </html>
-            `;
-            
+            const htmlReport = `<html><body style="font-family:sans-serif; padding:40px;"><h1>Reporte Ikigai - Proceso C</h1><p>Avance Total: ${metrics.total}</p><hr>${reflectionsHTML}</body></html>`;
             const dataStr = "data:text/html;charset=utf-8," + encodeURIComponent(htmlReport);
-            const downloadAnchorNode = document.createElement('a');
-            downloadAnchorNode.setAttribute("href", dataStr);
-            downloadAnchorNode.setAttribute("download", `Reporte_Progreso_ProcesoC.html`);
-            document.body.appendChild(downloadAnchorNode);
-            downloadAnchorNode.click();
-            downloadAnchorNode.remove();
+            const a = document.createElement('a');
+            a.href = dataStr;
+            a.download = "Reporte_Ikigai.html";
+            a.click();
         };
 
         document.addEventListener('DOMContentLoaded', () => {
