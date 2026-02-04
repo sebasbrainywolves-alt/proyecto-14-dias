@@ -1,453 +1,149 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Proyecto 14 Días - Proceso C</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- Firebase SDK -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+  <meta charset="UTF-8" />
+  <title>Proyecto 14 Días</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-        // CONFIGURACIÓN E INICIALIZACIÓN
-        const firebaseConfig = JSON.parse(__firebase_config);
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'proyecto-14-dias';
+  <style>
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, sans-serif;
+      background: #0b1324;
+      color: #eaf2ff;
+    }
 
-        // Estado Global
-        let currentUser = null;
-        let localState = {
-            currentDay: 1,
-            completedDays: [],
-            reflections: [],
-            procesoCLevel: 0
-        };
+    .container {
+      max-width: 900px;
+      margin: auto;
+      padding: 32px 20px;
+    }
 
-        const statusText = document.getElementById('syncStatus');
-        const userIdDisplay = document.getElementById('userIdDisplay');
+    h1 {
+      font-size: 32px;
+      margin-bottom: 4px;
+    }
 
-        // Autenticación (Regla 3)
-        const initAuth = async () => {
-            try {
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
-            } catch (err) { console.error("Error auth", err); }
-        };
+    .sub {
+      opacity: 0.6;
+      margin-bottom: 24px;
+    }
 
-        initAuth();
+    .card {
+      background: #121d33;
+      border-radius: 20px;
+      padding: 24px;
+      margin-bottom: 24px;
+      border: 1px solid rgba(255,255,255,0.06);
+    }
 
-        onAuthStateChanged(auth, (user) => {
-            if (user) {
-                currentUser = user;
-                userIdDisplay.innerText = `ID: ${user.uid}`;
-                loadData();
-            }
+    .task {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 14px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+
+    .task:last-child {
+      border-bottom: none;
+    }
+
+    input[type="checkbox"] {
+      width: 20px;
+      height: 20px;
+    }
+
+    .progress {
+      margin-top: 16px;
+      font-size: 14px;
+      opacity: 0.8;
+    }
+
+    button {
+      margin-top: 20px;
+      width: 100%;
+      padding: 14px;
+      border-radius: 14px;
+      border: none;
+      background: #2ecbff;
+      color: #001018;
+      font-weight: 700;
+      cursor: pointer;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h1>PROYECTO 14 DÍAS</h1>
+    <div class="sub">Día 1 · Enfoque suave</div>
+
+    <div class="card">
+      <h3>Tareas del día</h3>
+      <div id="tasks"></div>
+      <div class="progress" id="progress">0 / 3 completadas</div>
+      <button id="closeDay">Cerrar día</button>
+    </div>
+  </div>
+
+  <script>
+    const DAY = 1;
+
+    const tareas = [
+      "Ordenar algo pequeño del entorno",
+      "Salir a caminar 10 minutos",
+      "Hacer una foto sin expectativa"
+    ];
+
+    const saved = JSON.parse(localStorage.getItem("dia_" + DAY)) || [];
+
+    const tasksContainer = document.getElementById("tasks");
+    const progress = document.getElementById("progress");
+
+    function render() {
+      tasksContainer.innerHTML = "";
+
+      tareas.forEach((text, i) => {
+        const div = document.createElement("div");
+        div.className = "task";
+
+        const check = document.createElement("input");
+        check.type = "checkbox";
+        check.checked = saved.includes(i);
+
+        check.addEventListener("change", () => {
+          if (check.checked && !saved.includes(i)) {
+            saved.push(i);
+          }
+          if (!check.checked) {
+            const idx = saved.indexOf(i);
+            if (idx > -1) saved.splice(idx, 1);
+          }
+          localStorage.setItem("dia_" + DAY, JSON.stringify(saved));
+          updateProgress();
         });
 
-        // Cargar datos del repositorio
-        async function loadData() {
-            if (!currentUser) return;
-            const docRef = doc(db, 'artifacts', appId, 'users', currentUser.uid, 'progress', 'mainState');
-            try {
-                const docSnap = await getDoc(docRef);
-                if (docSnap.exists()) {
-                    const data = docSnap.data();
-                    localState.currentDay = data.currentDay || 1;
-                    localState.completedDays = data.completedDays || [];
-                    localState.reflections = data.reflections || [];
-                    localState.procesoCLevel = data.procesoCLevel || 0;
-                    if (data.taskStates) {
-                        data.taskStates.forEach((dayTasks, dIdx) => {
-                            dayTasks.forEach((done, tIdx) => {
-                                if (window.plan[dIdx]) window.plan[dIdx].tasks[tIdx].done = done;
-                            });
-                        });
-                    }
-                }
-                window.updateUI();
-                window.renderReflections();
-            } catch (error) { console.error("Error carga", error); }
-        }
+        const label = document.createElement("span");
+        label.textContent = text;
 
-        // Guardar datos en el repositorio
-        window.saveData = async () => {
-            if (!currentUser) return;
-            statusText.innerText = "Sincronizando...";
-            const taskStates = window.plan.map(p => p.tasks.map(t => t.done));
-            try {
-                await setDoc(doc(db, 'artifacts', appId, 'users', currentUser.uid, 'progress', 'mainState'), {
-                    currentDay: localState.currentDay,
-                    completedDays: localState.completedDays,
-                    reflections: localState.reflections,
-                    taskStates: taskStates,
-                    procesoCLevel: localState.procesoCLevel,
-                    lastUpdated: new Date().toISOString()
-                });
-                statusText.innerText = "Sincronizado";
-            } catch (error) { statusText.innerText = "Error Sync"; }
-        };
+        div.appendChild(check);
+        div.appendChild(label);
+        tasksContainer.appendChild(div);
+      });
 
-        window.localState = localState;
-    </script>
+      updateProgress();
+    }
 
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;600;800&display=swap');
-        :root { --bg: #0b1120; --card: #161e31; --accent: #38bdf8; --success: #10b981; }
-        body { background-color: var(--bg); color: #f8fafc; font-family: 'Plus Jakarta Sans', sans-serif; overflow-x: hidden; }
-        .glass-card { background: var(--card); border: 1px solid #1e293b; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4); }
-        .day-box { aspect-ratio: 1/1; border-radius: 12px; font-size: 0.65rem; border: 1px solid #1e293b; cursor: pointer; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
-        .day-box.completed { background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(16, 185, 129, 0.05)); border-color: var(--success); color: var(--success); }
-        .day-box.current { border-color: var(--accent); background: rgba(56, 189, 248, 0.1); transform: scale(1.1); z-index: 10; box-shadow: 0 0 15px rgba(56, 189, 248, 0.3); }
-        .task-item { transition: all 0.2s ease; cursor: pointer; border-left: 4px solid transparent; }
-        .task-item.done { opacity: 0.5; text-decoration: line-through; border-left-color: var(--success); background: rgba(16, 185, 129, 0.05); }
-        .custom-checkbox { width: 22px; height: 22px; border: 2px solid #334155; border-radius: 6px; position: relative; transition: all 0.2s; }
-        .task-item.done .custom-checkbox { background: var(--success); border-color: var(--success); }
-        .task-item.done .custom-checkbox::after { content: '✓'; color: white; font-size: 14px; position: absolute; left: 4px; top: -1px; font-weight: bold; }
-        #reportModal { backdrop-filter: blur(12px); }
-        .proceso-c-bar { height: 4px; border-radius: 2px; background: #1e293b; overflow: hidden; }
-        .proceso-c-fill { height: 100%; background: linear-gradient(90deg, #38bdf8, #818cf8); transition: width 0.8s ease; }
-    </style>
-</head>
-<body class="min-h-screen pb-20">
-    <div class="max-w-3xl mx-auto p-4 md:p-8">
-        
-        <header class="flex justify-between items-center mb-10 pt-4">
-            <div>
-                <h1 class="text-3xl font-extrabold italic text-white uppercase leading-none tracking-tighter">PROYECTO <span class="text-sky-400">14 DÍAS</span></h1>
-                <div class="flex items-center gap-2 mt-2">
-                    <span id="syncStatus" class="text-[9px] font-bold uppercase tracking-widest text-slate-500">Conectando...</span>
-                    <div class="w-1 h-1 rounded-full bg-slate-700"></div>
-                    <span class="text-[9px] font-bold uppercase tracking-widest text-indigo-400">PROCESO C</span>
-                </div>
-            </div>
-            <div class="text-right">
-                <span id="userIdDisplay" class="text-[8px] font-mono text-slate-600 block mb-1">...</span>
-                <span id="dateDisplay" class="text-xs font-mono text-slate-400 uppercase italic"></span>
-            </div>
-        </header>
+    function updateProgress() {
+      progress.textContent = `${saved.length} / ${tareas.length} completadas`;
+    }
 
-        <!-- Bloque de Métricas Proceso C -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-            <div class="glass-card rounded-[2rem] p-6 flex flex-col items-center">
-                <div class="flex justify-between w-full mb-4 px-2">
-                    <h3 class="text-[10px] font-bold uppercase tracking-widest text-slate-500 italic">Energía Ikigai</h3>
-                    <span class="text-[10px] font-black text-sky-400" id="radarValue">0%</span>
-                </div>
-                <div class="w-full h-48 flex items-center justify-center">
-                    <canvas id="radarChart"></canvas>
-                </div>
-            </div>
+    document.getElementById("closeDay").onclick = () => {
+      alert("Día cerrado. Bien hecho.");
+    };
 
-            <div class="glass-card rounded-[2rem] p-6 flex flex-col">
-                <h3 class="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-6 italic">Arquitectura de Bloques</h3>
-                <div class="flex-1 flex justify-around items-end gap-6 h-32 px-4">
-                    <div class="flex flex-col items-center w-full h-full justify-end">
-                        <div class="w-full bg-slate-900 rounded-t-2xl overflow-hidden relative h-3/4 border border-slate-800">
-                            <div id="fillEstabilidad" class="absolute bottom-0 w-full bg-sky-500/80 transition-all duration-1000 shadow-[0_0_15px_rgba(56,189,248,0.3)]" style="height: 0%"></div>
-                        </div>
-                        <span class="text-[8px] font-black text-slate-500 mt-3 uppercase tracking-tighter">Estabilidad</span>
-                    </div>
-                    <div class="flex flex-col items-center w-full h-full justify-end">
-                        <div class="w-full bg-slate-900 rounded-t-2xl overflow-hidden relative h-3/4 border border-slate-800">
-                            <div id="fillFlujo" class="absolute bottom-0 w-full bg-amber-500/80 transition-all duration-1000 shadow-[0_0_15px_rgba(245,158,11,0.3)]" style="height: 0%"></div>
-                        </div>
-                        <span class="text-[8px] font-black text-slate-500 mt-3 uppercase tracking-tighter">Flujo</span>
-                    </div>
-                    <div class="flex flex-col items-center w-full h-full justify-end">
-                        <div class="w-full bg-slate-900 rounded-t-2xl overflow-hidden relative h-3/4 border border-slate-800">
-                            <div id="fillSentido" class="absolute bottom-0 w-full bg-emerald-500/80 transition-all duration-1000 shadow-[0_0_15px_rgba(16,185,129,0.3)]" style="height: 0%"></div>
-                        </div>
-                        <span class="text-[8px] font-black text-slate-500 mt-3 uppercase tracking-tighter">Sentido</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Calendario de Ciclo -->
-        <section class="glass-card rounded-[2rem] p-6 mb-8 border-b-4 border-slate-800">
-            <div id="calendarGrid" class="grid grid-cols-7 gap-3"></div>
-        </section>
-
-        <!-- Panel de Control Diario -->
-        <section class="glass-card rounded-[2.5rem] p-6 md:p-10 border-l-[10px] border-sky-500 shadow-2xl mb-8 relative overflow-hidden">
-            <div class="absolute top-0 right-0 p-8 opacity-5">
-                <svg width="120" height="120" viewBox="0 0 24 24" fill="white"><path d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z"/></svg>
-            </div>
-            
-            <div class="flex justify-between items-start mb-8">
-                <div>
-                    <span id="blockBadge" class="border text-[10px] font-black px-3 py-1.5 rounded-full uppercase tracking-[0.2em] mb-3 inline-block"></span>
-                    <h2 class="text-4xl font-black text-white italic" id="dayTitle">Día 1</h2>
-                </div>
-                <div class="text-right">
-                    <span id="dailyProgressText" class="text-3xl font-black text-white italic tracking-tighter">0/3</span>
-                    <p class="text-[9px] font-bold text-slate-500 uppercase mt-1">Consciencia del Proceso</p>
-                </div>
-            </div>
-            
-            <div class="space-y-4 mb-10" id="taskList"></div>
-
-            <div class="proceso-c-bar mb-8">
-                <div id="dailyProgressBar" class="proceso-c-fill" style="width: 0%"></div>
-            </div>
-            
-            <div class="grid grid-cols-1 gap-3">
-                <button onclick="window.cerrarDia()" id="closeDayBtn" class="w-full font-black py-5 rounded-2xl transition-all uppercase tracking-[0.2em] italic text-sm">
-                    Cerrar Día y Guardar
-                </button>
-                <button onclick="window.showReport()" id="reportBtn" class="w-full bg-gradient-to-r from-indigo-600 to-sky-600 hover:from-indigo-500 hover:to-sky-500 text-white font-black py-4 rounded-2xl transition-all uppercase tracking-widest italic text-xs hidden shadow-xl shadow-indigo-500/20">
-                    Generar Reporte Proceso C
-                </button>
-            </div>
-        </section>
-
-        <!-- Repositorio de Reflexiones -->
-        <section class="glass-card rounded-[2rem] p-8">
-            <div class="flex justify-between items-center mb-6">
-                <h3 class="text-[10px] font-bold uppercase tracking-widest text-slate-500 italic">Bitácora de Evolución</h3>
-                <span class="text-[9px] text-slate-600 font-mono">REPOSITORIO ACTIVO</span>
-            </div>
-            <div class="flex gap-3 mb-6">
-                <input id="reflexionInput" class="flex-1 bg-slate-950/50 border border-slate-800 rounded-2xl p-4 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/50 transition-all" placeholder="¿Qué aprendiste hoy sobre el Proceso C?">
-                <button onclick="window.guardarReflexion()" class="bg-sky-600 hover:bg-sky-500 px-6 rounded-2xl font-black text-xs uppercase transition-colors">Post</button>
-            </div>
-            <div id="historyLog" class="space-y-3 max-h-64 overflow-y-auto pr-2 custom-scrollbar"></div>
-        </section>
-
-    </div>
-
-    <!-- MODAL DE REPORTE FINAL -->
-    <div id="reportModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden">
-        <div class="absolute inset-0 bg-slate-950/95"></div>
-        <div class="glass-card w-full max-w-2xl max-h-[85vh] rounded-[3rem] relative z-10 overflow-y-auto p-10 border-indigo-500/20">
-            <button onclick="window.closeReport()" class="absolute top-8 right-8 text-slate-500 hover:text-white font-bold transition-colors">CERRAR</button>
-            
-            <div class="text-center mb-10">
-                <span class="text-indigo-400 font-black text-[11px] uppercase tracking-[0.4em]">Certificación de Ciclo</span>
-                <h2 class="text-5xl font-black italic text-white uppercase mt-3 tracking-tighter">ÉXITO PROCESO C</h2>
-                <div class="w-32 h-1.5 bg-gradient-to-r from-sky-500 to-indigo-500 mx-auto mt-6 rounded-full"></div>
-            </div>
-
-            <div class="grid grid-cols-2 gap-6 mb-10">
-                <div class="bg-slate-950/50 p-8 rounded-[2rem] border border-slate-800 text-center">
-                    <span class="text-4xl font-black text-white" id="repTotalTasks">0</span>
-                    <p class="text-[10px] font-bold text-slate-500 uppercase mt-2">Hitos Ejecutados</p>
-                </div>
-                <div class="bg-slate-950/50 p-8 rounded-[2rem] border border-slate-800 text-center">
-                    <span class="text-4xl font-black text-white" id="repEfficiency">0%</span>
-                    <p class="text-[10px] font-bold text-slate-500 uppercase mt-2">Nivel de Consciencia</p>
-                </div>
-            </div>
-
-            <div class="space-y-8 mb-10">
-                <h4 class="text-[11px] font-black text-indigo-400 uppercase tracking-widest italic px-2">Análisis de Resultados</h4>
-                <div id="reportMilestones" class="space-y-4"></div>
-            </div>
-
-            <div class="bg-indigo-500/5 border border-indigo-500/10 p-8 rounded-[2.5rem]">
-                <h4 class="text-[10px] font-black text-indigo-400 uppercase tracking-widest italic mb-3">Veredicto Final</h4>
-                <p id="reportSummary" class="text-sm text-slate-400 italic leading-relaxed text-justify"></p>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        // PLAN MAESTRO ACTUALIZADO CON PROCESO C
-        window.plan = [
-            { day: 1, theme: "Estabilidad", radar: [30, 10, 20], tasks: [{ type: "Estructural", title: "Registro civil Sebastián", desc: "Legal sucesión.", done: false }, { type: "Operativa", title: "Carpeta digital", desc: "Estructura archivos.", done: false }, { type: "Creativa", title: "Foto: Luz", desc: "Ikigai.", done: false }] },
-            { day: 2, theme: "Estabilidad", radar: [40, 15, 25], tasks: [{ type: "Estructural", title: "Registro civil Ana", desc: "Legal sucesión.", done: false }, { type: "Operativa", title: "Lijas y estuco", desc: "Cota.", done: false }, { type: "Creativa", title: "Foto: Textura", desc: "Ikigai.", done: false }] },
-            { day: 3, theme: "Estabilidad", radar: [50, 20, 30], tasks: [{ type: "Estructural", title: "Digitalizar documentos", desc: "Orden legal.", done: false }, { type: "Operativa", title: "Correo seguimiento", desc: "Abogado.", done: false }, { type: "Creativa", title: "Dibujo 15 min", desc: "Calma.", done: false }] },
-            { day: 4, theme: "Estabilidad", radar: [60, 25, 35], tasks: [{ type: "Estructural", title: "Resanar zona", desc: "Acción Cota.", done: false }, { type: "Operativa", title: "Silicona", desc: "Materiales.", done: false }, { type: "Creativa", title: "Foto: Antes", desc: "Registro.", done: false }] },
-            { day: 5, theme: "Estabilidad", radar: [70, 30, 40], tasks: [{ type: "Estructural", title: "Vidrio gestión", desc: "Gestión Cota.", done: false }, { type: "Operativa", title: "Ordenar materiales", desc: "Limpieza.", done: false }, { type: "Creativa", title: "Dibujo objetos", desc: "Observación.", done: false }] },
-            { day: 6, theme: "Flujo", radar: [50, 40, 30], tasks: [{ type: "Estructural", title: "Humedades", desc: "Sellar.", done: false }, { type: "Operativa", title: "Confirmación", desc: "Llamada.", done: false }, { type: "Creativa", title: "Foto: Manos", desc: "Acción.", done: false }] },
-            { day: 7, theme: "Flujo", radar: [50, 50, 35], tasks: [{ type: "Estructural", title: "Pared pintura", desc: "Avance visible.", done: false }, { type: "Operativa", title: "Limpieza ligera", desc: "Post-pintura.", done: false }, { type: "Creativa", title: "Foto: Proceso", desc: "Registro.", done: false }] },
-            { day: 8, theme: "Flujo", radar: [50, 60, 40], tasks: [{ type: "Estructural", title: "Pared 2", desc: "Ritmo.", done: false }, { type: "Operativa", title: "Revisar legal", desc: "Respuestas.", done: false }, { type: "Creativa", title: "Dibujo libre", desc: "Ikigai.", done: false }] },
-            { day: 9, theme: "Flujo", radar: [50, 70, 50], tasks: [{ type: "Estructural", title: "Limpieza parcial", desc: "Preparar.", done: false }, { type: "Operativa", title: "Fotos avance", desc: "Registro.", done: false }, { type: "Creativa", title: "Foto: Después", desc: "Logro.", done: false }] },
-            { day: 10, theme: "Sentido", radar: [40, 60, 60], tasks: [{ type: "Estructural", title: "Texto arriendo", desc: "Borrador.", done: false }, { type: "Operativa", title: "Precios mercado", desc: "Comparativa.", done: false }, { type: "Creativa", title: "Foto: Espacios", desc: "Potencial.", done: false }] },
-            { day: 11, theme: "Sentido", radar: [40, 60, 70], tasks: [{ type: "Estructural", title: "Publicar", desc: "Acción pública.", done: false }, { type: "Operativa", title: "Responder", desc: "Gestión.", done: false }, { type: "Creativa", title: "Dibujo", desc: "Expresión.", done: false }] },
-            { day: 12, theme: "Sentido", radar: [40, 60, 80], tasks: [{ type: "Estructural", title: "Abogado 1", desc: "Sucesión.", done: false }, { type: "Operativa", title: "Bitácora legal", desc: "Notas.", done: false }, { type: "Creativa", title: "Foto: Caminos", desc: "Metáfora.", done: false }] },
-            { day: 13, theme: "Sentido", radar: [40, 60, 90], tasks: [{ type: "Estructural", title: "Abogado 2", desc: "Opción B.", done: false }, { type: "Operativa", title: "Análisis", desc: "Comparar.", done: false }, { type: "Creativa", title: "Dibujo", desc: "Calma.", done: false }] },
-            { day: 14, theme: "Sentido", radar: [50, 70, 100], tasks: [{ type: "Estructural", title: "Revisión final", desc: "Logros.", done: false }, { type: "Operativa", title: "Nuevo plan", desc: "Siguiente ciclo.", done: false }, { type: "Creativa", title: "Foto: Cierre", desc: "Ciclo.", done: false }] }
-        ];
-
-        let radarChart = null;
-
-        function initRadar() {
-            const ctx = document.getElementById('radarChart');
-            radarChart = new Chart(ctx, {
-                type: 'radar',
-                data: {
-                    labels: ['ESTABILIDAD', 'FLUJO', 'SENTIDO'],
-                    datasets: [{
-                        data: [10, 10, 10],
-                        backgroundColor: 'rgba(56, 189, 248, 0.15)',
-                        borderColor: '#38bdf8',
-                        pointBackgroundColor: '#38bdf8',
-                        pointBorderColor: '#fff',
-                        pointHoverBackgroundColor: '#fff',
-                        pointHoverBorderColor: '#38bdf8',
-                        borderWidth: 2
-                    }]
-                },
-                options: {
-                    scales: {
-                        r: { 
-                            min: 0, 
-                            max: 100, 
-                            ticks: { display: false }, 
-                            grid: { color: 'rgba(51, 65, 85, 0.5)' }, 
-                            angleLines: { color: 'rgba(51, 65, 85, 0.5)' }, 
-                            pointLabels: { color: '#94a3b8', font: { size: 10, weight: '700' } } 
-                        }
-                    },
-                    plugins: { legend: { display: false } }
-                }
-            });
-        }
-
-        window.updateUI = () => {
-            const currentPlan = window.plan[window.localState.currentDay - 1];
-            document.getElementById('dayTitle').innerText = `Día ${currentPlan.day}`;
-            
-            let badgeClass = "bg-sky-500/10 text-sky-400 border-sky-500/20";
-            if (currentPlan.theme === "Flujo") badgeClass = "bg-amber-500/10 text-amber-400 border-amber-500/20";
-            if (currentPlan.theme === "Sentido") badgeClass = "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
-            document.getElementById('blockBadge').className = `border ${badgeClass} text-[10px] font-black px-3 py-1.5 rounded-full uppercase tracking-[0.2em] mb-3 inline-block`;
-            document.getElementById('blockBadge').innerText = currentPlan.theme;
-
-            const taskList = document.getElementById('taskList');
-            taskList.innerHTML = '';
-            let doneCount = 0;
-            currentPlan.tasks.forEach((t, i) => {
-                if(t.done) doneCount++;
-                const div = document.createElement('div');
-                div.className = `task-item p-5 rounded-2xl border border-slate-800 bg-slate-900/40 flex items-center justify-between ${t.done ? 'done' : ''}`;
-                div.onclick = () => { t.done = !t.done; window.updateUI(); window.saveData(); };
-                div.innerHTML = `
-                    <div class="flex items-center gap-5">
-                        <div class="custom-checkbox"></div>
-                        <div>
-                            <span class="text-[8px] font-black text-slate-500 uppercase tracking-widest">${t.type}</span>
-                            <h4 class="text-sm font-bold text-white leading-tight">${t.title}</h4>
-                            <p class="text-[10px] text-slate-500 italic mt-0.5">${t.desc}</p>
-                        </div>
-                    </div>`;
-                taskList.appendChild(div);
-            });
-
-            document.getElementById('dailyProgressText').innerText = `${doneCount}/3`;
-            document.getElementById('dailyProgressBar').style.width = `${(doneCount/3)*100}%`;
-
-            const btn = document.getElementById('closeDayBtn');
-            if(doneCount === 3) {
-                btn.disabled = false;
-                btn.className = "w-full bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-black py-5 rounded-2xl shadow-xl shadow-emerald-500/20 hover:scale-[1.02] transition-all cursor-pointer";
-            } else {
-                btn.disabled = true;
-                btn.className = "w-full bg-slate-800 text-slate-500 font-black py-5 rounded-2xl opacity-40 cursor-not-allowed";
-            }
-
-            if(window.localState.completedDays.includes(14)) {
-                document.getElementById('reportBtn').classList.remove('hidden');
-            }
-
-            const grid = document.getElementById('calendarGrid');
-            grid.innerHTML = '';
-            for(let i=1; i<=14; i++) {
-                const div = document.createElement('div');
-                div.className = `day-box flex items-center justify-center font-black italic ${i === window.localState.currentDay ? 'current' : ''} ${window.localState.completedDays.includes(i) ? 'completed' : ''}`;
-                div.innerText = i;
-                if(i <= window.localState.currentDay || window.localState.completedDays.includes(i)) {
-                    div.onclick = () => { window.localState.currentDay = i; window.updateUI(); };
-                }
-                grid.appendChild(div);
-            }
-
-            if(radarChart) {
-                radarChart.data.datasets[0].data = currentPlan.radar;
-                radarChart.update();
-                const totalRadar = currentPlan.radar.reduce((a,b) => a+b, 0) / 3;
-                document.getElementById('radarValue').innerText = Math.round(totalRadar) + "%";
-            }
-
-            const est = window.localState.completedDays.filter(d => d<=5).length;
-            const flu = window.localState.completedDays.filter(d => d>5 && d<=9).length;
-            const sen = window.localState.completedDays.filter(d => d>9).length;
-            document.getElementById('fillEstabilidad').style.height = `${(est/5)*100}%`;
-            document.getElementById('fillFlujo').style.height = `${(flu/4)*100}%`;
-            document.getElementById('fillSentido').style.height = `${(sen/5)*100}%`;
-        };
-
-        window.cerrarDia = () => {
-            if(!window.localState.completedDays.includes(window.localState.currentDay)) {
-                window.localState.completedDays.push(window.localState.currentDay);
-            }
-            if(window.localState.currentDay < 14) window.localState.currentDay++;
-            window.updateUI();
-            window.saveData();
-        };
-
-        window.guardarReflexion = () => {
-            const val = document.getElementById('reflexionInput').value;
-            if(!val) return;
-            window.localState.reflections.push({ day: window.localState.currentDay, text: val, timestamp: new Date().toISOString() });
-            document.getElementById('reflexionInput').value = '';
-            window.renderReflections();
-            window.saveData();
-        };
-
-        window.renderReflections = () => {
-            const container = document.getElementById('historyLog');
-            container.innerHTML = '';
-            window.localState.reflections.slice().reverse().forEach(ref => {
-                const entry = document.createElement('div');
-                entry.className = "p-4 bg-slate-900/40 rounded-[1.25rem] border border-slate-800 text-[11px] italic mb-3";
-                entry.innerHTML = `<div class="flex justify-between mb-1"><span class="text-sky-400 font-black uppercase">Día ${ref.day}</span><span class="text-[8px] text-slate-600 font-mono">${new Date(ref.timestamp).toLocaleTimeString()}</span></div><p class="text-slate-400 leading-relaxed">"${ref.text}"</p>`;
-                container.appendChild(entry);
-            });
-        };
-
-        window.showReport = () => {
-            const totalTasks = window.localState.completedDays.length * 3;
-            document.getElementById('repTotalTasks').innerText = totalTasks;
-            document.getElementById('repEfficiency').innerText = Math.round((window.localState.completedDays.length / 14) * 100) + "%";
-            
-            const milestones = document.getElementById('reportMilestones');
-            milestones.innerHTML = '';
-            
-            const highlights = [
-                { title: "Arquitectura Legal", desc: "Sólida base establecida para la sucesión de Sebastián y Ana." },
-                { title: "Ejecución Kaizen", desc: "Transformación física del espacio en Cota mediante micro-acciones." },
-                { title: "Propósito Ikigai", desc: "Conexión clara entre la fotografía/dibujo y la calma operativa." }
-            ];
-
-            highlights.forEach(h => {
-                const d = document.createElement('div');
-                d.className = "flex items-start gap-5 p-5 bg-slate-950/40 rounded-[1.5rem] border border-slate-800 transition-all hover:border-indigo-500/30";
-                d.innerHTML = `<div class="w-2.5 h-2.5 rounded-full bg-gradient-to-tr from-sky-400 to-indigo-500 mt-1.5 shadow-[0_0_10px_rgba(56,189,248,0.5)]"></div><div><h5 class="text-xs font-black text-white uppercase tracking-wider">${h.title}</h5><p class="text-[10px] text-slate-500 italic mt-1">${h.desc}</p></div>`;
-                milestones.appendChild(d);
-            });
-
-            document.getElementById('reportSummary').innerText = "Has completado el Ciclo de Consciencia (Proceso C). La integración de los bloques de Estabilidad, Flujo y Sentido te permite ahora operar desde un lugar de mayor claridad. Este reporte certifica que has superado la inercia inicial y posees una estructura funcional de hábitos para escalar tu visión personal y profesional.";
-
-            document.getElementById('reportModal').classList.remove('hidden');
-        };
-
-        window.closeReport = () => document.getElementById('reportModal').classList.add('hidden');
-
-        window.onload = () => {
-            document.getElementById('dateDisplay').innerText = new Date().toLocaleDateString('es-ES', { day:'2-digit', month:'short', year:'numeric' }).toUpperCase();
-            initRadar();
-            window.updateUI();
-        };
-    </script>
+    render();
+  </script>
 </body>
 </html>
